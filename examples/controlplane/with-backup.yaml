@@ -1,0 +1,39 @@
+# Pre-requisite: create the UXP license secret on the management cluster
+# in the crossplane-system namespace. Either of these works:
+#   up uxp license apply <path-to-license.json>          # key=license.json
+#   kubectl create secret generic uxp-license \           # key=license.json
+#     --from-file=license.json=<path-to-license.json> \
+#     -n crossplane-system
+# The composition reads the license.json key directly via bracket-notation
+# field path; no manual re-keying needed.
+apiVersion: aws.platform.upbound.io/v1alpha1
+kind: ControlPlane
+metadata:
+  name: prod-control-plane
+spec:
+  parameters:
+    id: prod-control-plane
+    region: us-east-1
+    version: "1.34"
+    nodes:
+      count: 3
+      instanceType: t3.medium
+    accessConfig:
+      authenticationMode: API_AND_CONFIG_MAP
+      bootstrapClusterCreatorAdminPermissions: true
+    backup:
+      enabled: "yes"
+      location: arn:aws:s3:::markus-backup-test
+      schedule: "0 */2 * * *"
+    knative:
+      enabled: "yes"
+    providerVerticalPodAutoscaling:
+      enabled: "yes"
+      minCpu: "100m"
+      maxCpu: "2"
+      minMemory: "100Mi"
+      maxMemory: "4000Mi"
+    license:
+      secretRef:
+        name: uxp-license
+        namespace: crossplane-system
