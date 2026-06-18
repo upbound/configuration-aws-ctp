@@ -29,4 +29,4 @@ spec:
     UXP backup configuration using InjectedIdentity (IRSA). Implemented with a Python composition
     function (functional parity with the go-templating/configuration-aws-ctp package).
   repository: xpkg.upbound.io/upbound/configuration-aws-ctp
-  source: github.com/UpboundCare/gaig
+  source: github.com/upbound/configuration-aws-ctp
