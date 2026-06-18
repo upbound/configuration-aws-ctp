@@ -27,6 +27,6 @@ spec:
   readme: |
     This configuration creates AWS EKS clusters configured as Upbound control planes with optional
     UXP backup configuration using InjectedIdentity (IRSA). Implemented with a Python composition
-    function (functional parity with the go-templating/configuration-aws-ctp package).
+    function.
   repository: xpkg.upbound.io/upbound/configuration-aws-ctp
   source: github.com/upbound/configuration-aws-ctp

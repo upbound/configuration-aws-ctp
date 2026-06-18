@@ -1,9 +1,8 @@
 """
 Composition function for AWS EKS Control Plane with UXP backup support.
 
-Functional parity with go-templating/configuration-aws-ctp. Each section
-below is implemented in a sibling module (mirroring the go-templating
-NN-section.yaml.gotmpl layout):
+Each section below is implemented in a sibling module (NN denotes the
+ordered section it corresponds to):
 
   prelude.py            (00) shared extractors and helpers
   network.py            (01) VPC + subnets

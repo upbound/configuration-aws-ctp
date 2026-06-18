@@ -188,8 +188,7 @@ def add_irsa_resources(rsp, id_val, region, provider_config, oidc_host,
     resource.update(rsp.desired.resources["backup-sa"], sa_patch)
 
     # Rolling restart of the controller deployment to pick up the new SA
-    # projection. The kubectl.kubernetes.io/restartedAt value is treated as a
-    # template marker by the go-templating sibling; here it is a literal
+    # projection. The kubectl.kubernetes.io/restartedAt value is a literal
     # string written once, which is enough to force a single rollout when the
     # Object is first applied.
     controller_restart = {

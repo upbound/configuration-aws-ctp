@@ -1,9 +1,8 @@
 """
 00-prelude — shared extractors and helpers.
 
-Equivalent to functions/ctp/00-prelude.yaml.gotmpl in the go-templating
-package: the read-only logic that inspects parameters and observed state to
-derive values consumed by every other section.
+The read-only logic that inspects parameters and observed state to derive
+values consumed by every other section.
 """
 
 import re
