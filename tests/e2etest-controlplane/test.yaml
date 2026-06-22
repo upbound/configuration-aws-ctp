@@ -1,0 +1,58 @@
+# E2E test: ControlPlane with backup + enterprise license.
+# Spins up a real EKS cluster via the configuration-aws-ctp composition,
+# installs UXP, wires IRSA backup, and applies an enterprise license.
+# Requires:
+#   - An AWS ProviderConfig named "default" with valid credentials
+#     (created automatically from initResources, but the referenced Secret
+#     "aws-creds" in crossplane-system must already exist on the test
+#     control plane).
+#   - A Secret named "uxp-license" in namespace "default" whose key
+#     "license.json" contains the UXP license JSON.
+#   - Sufficient AWS quotas for one t3.small two-node EKS cluster in us-east-1.
+#
+# Expected runtime: 25-45 minutes (EKS provisioning + UXP install + IRSA wiring).
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: E2ETest
+metadata:
+  name: controlplane-with-backup-and-license
+spec:
+  crossplane:
+    autoUpgrade:
+      channel: Stable
+  defaultConditions:
+  - Ready
+  timeoutSeconds: 3600
+  cleanupTimeoutSeconds: 1200
+  initResources:
+  - apiVersion: aws.upbound.io/v1beta1
+    kind: ProviderConfig
+    metadata:
+      name: default
+    spec:
+      credentials:
+        source: Secret
+        secretRef:
+          namespace: crossplane-system
+          name: aws-creds
+          key: credentials
+  manifests:
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: e2e-test-cp
+    spec:
+      parameters:
+        id: e2e-test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        backup:
+          enabled: "yes"
+          location: arn:aws:s3:::upbound-e2e-test-cp-backup
+        license:
+          secretRef:
+            name: uxp-license
+            namespace: default
+  skipDelete: false

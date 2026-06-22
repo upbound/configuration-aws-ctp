@@ -1,0 +1,24 @@
+apiVersion: aws.platform.upbound.io/v1alpha1
+kind: ControlPlane
+metadata:
+  name: uxp-ctp-1
+spec:
+  parameters:
+    id: uxp-ctp-1
+    region: us-east-1
+    version: "1.34"
+    nodes:
+      count: 5
+      instanceType: t3.large
+    backup:
+      enabled: "yes"
+      location: arn:aws:s3:::uxp-ctp-1
+      schedule: "*/15 * * * *"
+    license:
+      secretRef:
+        name: uxp-license
+        namespace: default
+    knative:
+      enabled: "yes"
+    providerVerticalPodAutoscaling:
+      enabled: "no"

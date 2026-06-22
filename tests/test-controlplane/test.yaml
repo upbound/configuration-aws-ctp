@@ -1,0 +1,771 @@
+# Composition tests for the ControlPlane Python composition.
+# Each test renders the composition against a ControlPlane XR fixture and
+# asserts that specific composed resources are produced.
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: basic
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+  assertResources:
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: Network
+    metadata:
+      name: test-cp
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: EKS
+    metadata:
+      name: test-cp
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-uxp
+    spec:
+      forProvider:
+        chart:
+          version: "2.2.1-up.1"
+        values:
+          upbound:
+            manager:
+              metering:
+                podSecurityContext:
+                  fsGroup: 65532
+                  fsGroupChangePolicy: OnRootMismatch
+  - apiVersion: protection.crossplane.io/v1beta1
+    kind: Usage
+    metadata:
+      name: test-cp-usage-release-eks
+    spec:
+      of:
+        kind: EKS
+      by:
+        kind: Release
+  - apiVersion: protection.crossplane.io/v1beta1
+    kind: Usage
+    metadata:
+      name: test-cp-usage-eks-network
+    spec:
+      of:
+        kind: Network
+      by:
+        kind: EKS
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: backup-enabled
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        backup:
+          enabled: "yes"
+          location: arn:aws:s3:::my-backup-bucket
+  assertResources:
+  - apiVersion: s3.aws.m.upbound.io/v1beta1
+    kind: Bucket
+    metadata:
+      name: test-cp-backup-bucket
+    spec:
+      forProvider:
+        region: us-east-1
+  - apiVersion: eks.aws.m.upbound.io/v1beta1
+    kind: Cluster
+    metadata:
+      name: test-cp-observe
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-backup-config
+    spec:
+      forProvider:
+        manifest:
+          spec:
+            objectStorage:
+              credentials:
+                source: InjectedIdentity
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-backup-rbac
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-backup-rbac-binding
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: with-license
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        backup:
+          enabled: "yes"
+          location: arn:aws:s3:::my-backup-bucket
+        license:
+          secretRef:
+            name: uxp-license
+            namespace: default
+  assertResources:
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-uxp-license-secret
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-uxp-license
+    spec:
+      forProvider:
+        manifest:
+          kind: License
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: no-backup
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+  assertResources:
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: Network
+    metadata:
+      name: test-cp
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: EKS
+    metadata:
+      name: test-cp
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-uxp
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: with-schedule
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        backup:
+          enabled: "yes"
+          location: arn:aws:s3:::my-backup-bucket
+          schedule: "@daily"
+  assertResources:
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-backup-config
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-backup-schedule
+    spec:
+      forProvider:
+        manifest:
+          kind: BackupSchedule
+          spec:
+            schedule: "@daily"
+            configRef:
+              name: test-cp-backup
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: with-vpa
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        providerVerticalPodAutoscaling:
+          enabled: "yes"
+          minCpu: "500m"
+          maxCpu: "2"
+          minMemory: "100Mi"
+          maxMemory: "4000Mi"
+  assertResources:
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-vpa
+    spec:
+      forProvider:
+        chart:
+          name: vpa
+          repository: https://charts.fairwinds.com/stable
+          version: 4.10.1
+        namespace: kube-system
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: with-vpa-deployed
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        providerVerticalPodAutoscaling:
+          enabled: "yes"
+          minCpu: "500m"
+          maxCpu: "2"
+          minMemory: "100Mi"
+          maxMemory: "4000Mi"
+  observedResources:
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-vpa
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: vpa-release
+    spec:
+      forProvider:
+        chart:
+          name: vpa
+          repository: https://charts.fairwinds.com/stable
+          version: 4.10.1
+    status:
+      atProvider:
+        state: deployed
+  assertResources:
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-upbound-runtime-config
+    spec:
+      forProvider:
+        manifest:
+          kind: UpboundRuntimeConfig
+          spec:
+            capabilities:
+            - ProviderVPA
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-uxp
+    spec:
+      forProvider:
+        values:
+          upbound:
+            manager:
+              args:
+              - --enable-provider-vpa
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: backup-uxp-deployed
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        backup:
+          enabled: "yes"
+          location: arn:aws:s3:::my-backup-bucket
+  observedResources:
+  - apiVersion: eks.aws.m.upbound.io/v1beta1
+    kind: Cluster
+    metadata:
+      name: test-cp-observe
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: eks-cluster-observe
+    spec:
+      forProvider:
+        region: us-east-1
+    status:
+      atProvider:
+        arn: arn:aws:eks:us-east-1:123456789012:cluster/test-cp-abc12345
+        identity:
+        - oidc:
+          - issuer: https://oidc.eks.us-east-1.amazonaws.com/id/ABC123XYZ
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-uxp
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: uxp-release
+    spec:
+      forProvider:
+        chart:
+          name: crossplane
+          repository: oci://xpkg.upbound.io/upbound
+          version: 2.2.1-up.1
+    status:
+      atProvider:
+        state: deployed
+  assertResources:
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-backup-sa
+    spec:
+      forProvider:
+        manifest:
+          kind: ServiceAccount
+          metadata:
+            name: upbound-controller-manager
+            namespace: crossplane-system
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-controller-restart
+    spec:
+      forProvider:
+        manifest:
+          kind: Deployment
+          metadata:
+            name: upbound-controller-manager
+            namespace: crossplane-system
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: uxp-targets-crossplane-system
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+  assertResources:
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-uxp
+    spec:
+      forProvider:
+        namespace: crossplane-system
+        chart:
+          name: crossplane
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: license-targets-crossplane-system
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        backup:
+          enabled: "yes"
+          location: arn:aws:s3:::my-backup-bucket
+        license:
+          secretRef:
+            name: uxp-license
+            namespace: default
+  assertResources:
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-uxp-license-secret
+    spec:
+      forProvider:
+        manifest:
+          kind: Secret
+          metadata:
+            name: uxp-license
+            namespace: crossplane-system
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-uxp-license
+    spec:
+      forProvider:
+        manifest:
+          kind: License
+          spec:
+            secretRef:
+              name: uxp-license
+              namespace: crossplane-system
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: rbac-binding-namespace
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        backup:
+          enabled: "yes"
+          location: arn:aws:s3:::my-backup-bucket
+  assertResources:
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-backup-rbac-binding
+    spec:
+      forProvider:
+        manifest:
+          kind: ClusterRoleBinding
+          subjects:
+          - kind: ServiceAccount
+            name: upbound-controller-manager
+            namespace: crossplane-system
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: vpa-and-knative-merged
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        providerVerticalPodAutoscaling:
+          enabled: "yes"
+        knative:
+          enabled: "yes"
+  observedResources:
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-vpa
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: vpa-release
+    spec:
+      forProvider:
+        chart:
+          name: vpa
+          repository: https://charts.fairwinds.com/stable
+          version: 4.10.1
+    status:
+      atProvider:
+        state: deployed
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-knative-certmanager
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: knative-certmanager-release
+    spec:
+      forProvider:
+        chart:
+          name: cert-manager
+          repository: https://charts.jetstack.io
+          version: v1.16.3
+    status:
+      atProvider:
+        state: deployed
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-knative-operator
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: knative-operator-release
+    spec:
+      forProvider:
+        chart:
+          name: knative-operator
+          repository: https://knative.github.io/operator
+          version: v1.21.1
+    status:
+      atProvider:
+        state: deployed
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-knative-serving-cr
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: knative-serving-cr
+    spec:
+      providerConfigRef:
+        name: test-cp
+    status:
+      atProvider:
+        manifest:
+          status:
+            conditions:
+            - type: Ready
+              status: "True"
+  assertResources:
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-upbound-runtime-config
+    spec:
+      forProvider:
+        manifest:
+          spec:
+            capabilities:
+            - ProviderVPA
+            - FunctionKnativeRuntime
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-uxp
+    spec:
+      forProvider:
+        values:
+          upbound:
+            manager:
+              args:
+              - --enable-provider-vpa
+              - --enable-knative-runtime
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: with-knative
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        knative:
+          enabled: "yes"
+  assertResources:
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-knative-certmanager
+    spec:
+      forProvider:
+        chart:
+          name: cert-manager
+          repository: https://charts.jetstack.io
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-knative-operator
+    spec:
+      forProvider:
+        chart:
+          name: knative-operator
+          repository: https://knative.github.io/operator
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: with-install-from
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.large
+        backup:
+          enabled: "yes"
+          location: arn:aws:s3:::new-cp-bucket
+          installFrom:
+            location: arn:aws:s3:::old-cp-bucket
+            name: old-cp-backup-002
+  assertResources:
+  - apiVersion: s3.aws.m.upbound.io/v1beta1
+    kind: Bucket
+    metadata:
+      name: test-cp-backup-bucket
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-backup-config
+    spec:
+      forProvider:
+        manifest:
+          spec:
+            objectStorage:
+              bucket: new-cp-bucket

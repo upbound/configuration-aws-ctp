@@ -1,0 +1,32 @@
+apiVersion: meta.dev.upbound.io/v2alpha1
+kind: Project
+metadata:
+  name: configuration-aws-ctp
+spec:
+  dependsOn:
+  - apiVersion: pkg.crossplane.io/v1
+    kind: Configuration
+    package: xpkg.upbound.io/upbound/configuration-aws-eks
+    version: v2.0.1
+  - apiVersion: pkg.crossplane.io/v1
+    kind: Function
+    package: xpkg.upbound.io/crossplane-contrib/function-extra-resources
+    version: v0.3.0
+  - apiVersion: pkg.crossplane.io/v1
+    kind: Function
+    package: xpkg.upbound.io/crossplane-contrib/function-auto-ready
+    version: v0.6.4
+  - apiVersion: pkg.crossplane.io/v1
+    kind: Provider
+    package: xpkg.upbound.io/upbound/provider-aws-s3
+    version: '>=v2.0.0-0'
+  description: AWS EKS Control Plane configuration with optional UXP backup support
+    using InjectedIdentity (IRSA).
+  license: Apache-2.0
+  maintainer: Upbound <support@upbound.io>
+  readme: |
+    This configuration creates AWS EKS clusters configured as Upbound control planes with optional
+    UXP backup configuration using InjectedIdentity (IRSA). Implemented with a Python composition
+    function.
+  repository: xpkg.upbound.io/upbound/configuration-aws-ctp
+  source: github.com/upbound/configuration-aws-ctp

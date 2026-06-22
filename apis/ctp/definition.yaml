@@ -1,0 +1,291 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: controlplanes.aws.platform.upbound.io
+spec:
+  group: aws.platform.upbound.io
+  names:
+    categories:
+    - crossplane
+    kind: ControlPlane
+    plural: controlplanes
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        description: ControlPlane is the Schema for creating AWS EKS clusters configured as Upbound control planes with optional UXP backup.
+        properties:
+          spec:
+            description: ControlPlaneSpec defines the desired state of ControlPlane.
+            properties:
+              parameters:
+                type: object
+                description: ControlPlane configuration parameters.
+                properties:
+                  id:
+                    type: string
+                    description: ID of this ControlPlane that other objects will use to refer to it.
+                  region:
+                    type: string
+                    description: Region is the region you'd like your resource to be created in.
+                  providerConfigName:
+                    description: Crossplane ProviderConfig to use for provisioning this resources
+                    type: string
+                    default: default
+                  version:
+                    description: Kubernetes version for the EKS cluster
+                    type: string
+                    enum:
+                    - "1.35"
+                    - "1.34"
+                    - "1.33"
+                    - "1.32"
+                    - "1.31"
+                    default: "1.34"
+                  nodes:
+                    type: object
+                    description: EKS node configuration parameters.
+                    properties:
+                      count:
+                        type: integer
+                        description: Desired node count, from 1 to 100.
+                      instanceType:
+                        type: string
+                        description: instance types associated with the Node Group.
+                        default: t3.small
+                    required:
+                    - count
+                    - instanceType
+                  accessConfig:
+                    type: object
+                    description: EKS access configuration.
+                    properties:
+                      bootstrapClusterCreatorAdminPermissions:
+                        type: boolean
+                        description: Whether or not to bootstrap the access config values to the cluster.
+                      authenticationMode:
+                        type: string
+                        enum:
+                        - CONFIG_MAP
+                        - API
+                        - API_AND_CONFIG_MAP
+                    default:
+                      bootstrapClusterCreatorAdminPermissions: true
+                      authenticationMode: API_AND_CONFIG_MAP
+                  iam:
+                    type: object
+                    description: IAM configuration to connect as ClusterAdmin.
+                    properties:
+                      principalArn:
+                        description: The principal ARN to connect as ClusterAdmin.
+                        type: string
+                  uxp:
+                    type: object
+                    description: UXP installation configuration.
+                    properties:
+                      version:
+                        type: string
+                        description: UXP Helm chart version to install (e.g. 2.2.1-up.1).
+                        default: "2.2.1-up.1"
+                    default:
+                      version: "2.2.1-up.1"
+                  backup:
+                    type: object
+                    description: UXP backup configuration using InjectedIdentity (IRSA).
+                    properties:
+                      enabled:
+                        type: string
+                        description: Enable UXP backup for this control plane ("yes" or "no").
+                        default: "no"
+                        enum: ["yes", "no"]
+                      location:
+                        type: string
+                        description: S3 bucket ARN for backup storage. Required when backup is enabled. The bucket is created if it does not already exist and is never deleted by Crossplane.
+                        pattern: '^arn:aws:s3:::[a-z0-9][a-z0-9.-]*[a-z0-9]$'
+                      schedule:
+                        type: string
+                        description: >-
+                          Backup schedule. Accepts named shortcuts (@hourly, @daily, @weekly),
+                          standard 5-field cron expressions (e.g. "0 0/4 * * *", "0/15 * * * 1-5"),
+                          or duration intervals (e.g. "@every 1h30m10s"). When set, a BackupSchedule
+                          resource is created on the control plane's EKS cluster.
+                      installFrom:
+                        type: object
+                        description: >-
+                          Restore UXP state from an existing backup during initial provisioning.
+                          Applied once at bootstrap — ignored on subsequent reconciles.
+                          Use this when changing node instance types: provision a new ControlPlane
+                          with the desired instanceType and set installFrom to restore state from
+                          the existing control plane's backup.
+                        properties:
+                          location:
+                            type: string
+                            description: S3 bucket ARN containing the source backup.
+                            pattern: '^arn:aws:s3:::[a-z0-9][a-z0-9.-]*[a-z0-9]$'
+                          name:
+                            type: string
+                            description: Name of the backup to restore from (e.g. "my-backup-002").
+                        required:
+                        - location
+                        - name
+                  license:
+                    type: object
+                    description: UXP enterprise license configuration. When set, provisions a license on the control plane's UXP instance.
+                    properties:
+                      secretRef:
+                        type: object
+                        description: Reference to a Secret on the management cluster containing the UXP license JSON under the key "license".
+                        properties:
+                          name:
+                            type: string
+                            description: Name of the secret containing the UXP license JSON.
+                          namespace:
+                            type: string
+                            description: Namespace of the secret.
+                            default: default
+                        required:
+                        - name
+                    required:
+                    - secretRef
+                  providerVerticalPodAutoscaling:
+                    type: object
+                    description: >-
+                      Enable Vertical Pod Autoscaling for UXP providers. Requires Metrics Server
+                      and VPA v1.4+ pre-installed on the EKS cluster. Needs a Standard or higher license.
+                    properties:
+                      enabled:
+                        type: string
+                        description: Enable provider VPA ("yes" or "no").
+                        default: "no"
+                        enum: ["yes", "no"]
+                      minCpu:
+                        type: string
+                        description: Minimum CPU allowed for provider containers (e.g. "100m").
+                      maxCpu:
+                        type: string
+                        description: Maximum CPU allowed for provider containers (e.g. "2").
+                      minMemory:
+                        type: string
+                        description: Minimum memory allowed for provider containers (e.g. "100Mi").
+                      maxMemory:
+                        type: string
+                        description: Maximum memory allowed for provider containers (e.g. "4000Mi").
+                  knative:
+                    type: object
+                    description: >-
+                      Enable Knative scale-to-zero for UXP functions. When enabled, cert-manager and
+                      Knative Serving are installed automatically on the EKS cluster. Needs a Standard or higher license.
+                    properties:
+                      enabled:
+                        type: string
+                        description: Enable Knative function runtime ("yes" or "no").
+                        default: "no"
+                        enum: ["yes", "no"]
+                  managementPolicies:
+                    description: ManagementPolicies for resources. Defaults to ["*"] which includes all operations.
+                    type: array
+                    items:
+                      type: string
+                      enum:
+                        - "*"
+                        - Create
+                        - Observe
+                        - Update
+                        - Delete
+                        - LateInitialize
+                    default:
+                    - "*"
+                required:
+                - id
+                - region
+                - nodes
+            required:
+            - parameters
+            type: object
+          status:
+            description: A Status represents the observed state
+            properties:
+              controlplane:
+                description: Status information for the control plane
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+                properties:
+                  created:
+                    description: Creation timestamp of this ControlPlane resource (RFC 3339).
+                    type: string
+                  uxp:
+                    description: UXP installation status on the EKS cluster.
+                    type: object
+                    properties:
+                      version:
+                        description: UXP Helm chart version deployed on this control plane.
+                        type: string
+                      ready:
+                        description: True when the UXP Helm Release is Ready (all UXP pods running).
+                        type: boolean
+                  backup:
+                    description: Backup status — populated once the EKS cluster is ready and backup is enabled.
+                    type: object
+                    properties:
+                      enabled:
+                        description: Whether backup is enabled for this control plane.
+                        type: string
+                      bucketArn:
+                        description: S3 bucket ARN configured as the backup destination.
+                        type: string
+                      roleArn:
+                        description: ARN of the IRSA IAM role created for the UXP backup controller.
+                        type: string
+                      lastBackupTime:
+                        description: Timestamp of the most recent scheduled backup run, sourced from BackupSchedule status.
+                        type: string
+                  resources:
+                    description: Managed resource health summary across all composed resources.
+                    type: object
+                    properties:
+                      total:
+                        description: Total number of composed managed resources.
+                        type: integer
+                      synced:
+                        description: Number of composed resources with Synced=True.
+                        type: integer
+                      ready:
+                        description: Number of composed resources with Ready=True.
+                        type: integer
+                      syncedAndReady:
+                        description: Number of composed resources with both Synced=True and Ready=True.
+                        type: integer
+                  knative:
+                    description: Knative feature status.
+                    type: object
+                    properties:
+                      enabled:
+                        description: Whether Knative function runtime is enabled.
+                        type: string
+                  providerVerticalPodAutoscaling:
+                    description: Provider VPA feature status.
+                    type: object
+                    properties:
+                      enabled:
+                        description: Whether provider Vertical Pod Autoscaling is enabled.
+                        type: string
+                  nodes:
+                    description: Node group status.
+                    type: object
+                    properties:
+                      instanceType:
+                        description: Desired EC2 instance type for worker nodes.
+                        type: string
+                      currentInstanceType:
+                        description: >-
+                          Currently running instance type observed from AWS. Differs from
+                          instanceType when an in-place change was attempted — see the
+                          NodeGroupTypeImmutable condition for remediation guidance.
+                        type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
