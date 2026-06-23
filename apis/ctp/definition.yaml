@@ -136,7 +136,7 @@ spec:
                     properties:
                       secretRef:
                         type: object
-                        description: Reference to a Secret on the management cluster containing the UXP license JSON under the key "license".
+                        description: Reference to a Secret on the management cluster containing the UXP license JSON under the key "license.json".
                         properties:
                           name:
                             type: string
