@@ -21,6 +21,7 @@ def add_vpa_resources(rsp, id_val, vpa, vpa_ready, config):
                 "chart": {
                     "name": "vpa",
                     "repository": "https://charts.fairwinds.com/stable",
+                    # renovate: datasource=helm depName=vpa registryUrl=https://charts.fairwinds.com/stable
                     "version": "4.10.1"
                 },
                 "namespace": "kube-system",
@@ -51,6 +52,7 @@ def add_vpa_resources(rsp, id_val, vpa, vpa_ready, config):
                 "chart": {
                     "name": "metrics-server",
                     "repository": "https://kubernetes-sigs.github.io/metrics-server/",
+                    # renovate: datasource=helm depName=metrics-server registryUrl=https://kubernetes-sigs.github.io/metrics-server/
                     "version": "3.12.2"
                 },
                 "namespace": "kube-system",

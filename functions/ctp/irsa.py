@@ -12,7 +12,7 @@ from crossplane.function import resource
 from .prelude import extract_bucket_name, stamp
 
 
-def add_irsa_resources(rsp, id_val, region, provider_config, oidc_host,
+def add_irsa_resources(rsp, id_val, bucket_region, provider_config, oidc_host,
                       oidc_provider_arn, role_arn, bucket_name,
                       observed, install_from, account_id, config):
     oidc_provider = {
@@ -259,7 +259,7 @@ def add_irsa_resources(rsp, id_val, region, provider_config, oidc_host,
                                     },
                                     "config": {
                                         "endpoint": "s3.amazonaws.com",
-                                        "region": region
+                                        "region": bucket_region
                                     }
                                 }
                             }

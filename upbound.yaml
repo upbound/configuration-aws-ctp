@@ -19,7 +19,7 @@ spec:
   - apiVersion: pkg.crossplane.io/v1
     kind: Provider
     package: xpkg.upbound.io/upbound/provider-aws-s3
-    version: '>=v2.0.0-0'
+    version: v2.6.1
   description: AWS EKS Control Plane configuration with optional UXP backup support
     using InjectedIdentity (IRSA).
   license: Apache-2.0

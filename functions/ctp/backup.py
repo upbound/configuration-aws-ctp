@@ -11,11 +11,12 @@ from crossplane.function import resource
 from .prelude import stamp
 
 
-def add_backup_resources(rsp, id_val, region, provider_config, bucket_name,
-                        cluster_name, backup, uxp_deployed, config):
+def add_backup_resources(rsp, id_val, region, bucket_region, provider_config,
+                        bucket_name, cluster_name, backup, uxp_deployed, config):
     # S3 Bucket — import-only. Delete is intentionally absent from
     # managementPolicies: deleting the XR removes this MR but leaves the AWS
-    # bucket (and the backup data) intact.
+    # bucket (and the backup data) intact. bucket_region may differ from the
+    # cluster region for cross-region DR.
     bucket = {
         "apiVersion": "s3.aws.m.upbound.io/v1beta1",
         "kind": "Bucket",
@@ -30,7 +31,7 @@ def add_backup_resources(rsp, id_val, region, provider_config, bucket_name,
         "spec": {
             "managementPolicies": ["Observe", "Create", "Update", "LateInitialize"],
             "forProvider": {
-                "region": region
+                "region": bucket_region
             },
             "providerConfigRef": {
                 "name": provider_config,
@@ -100,7 +101,7 @@ def add_backup_resources(rsp, id_val, region, provider_config, bucket_name,
                             },
                             "config": {
                                 "endpoint": "s3.amazonaws.com",
-                                "region": region
+                                "region": bucket_region
                             }
                         }
                     }
