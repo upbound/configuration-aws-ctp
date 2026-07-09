@@ -54,25 +54,20 @@ def check_license_conflict(id_val: str, license_param: Optional[Dict],
 
 
 def extract_oidc_info(backup: Dict, observed: Dict) -> tuple:
-    """Extract (oidc_url, cluster_arn, oidc_host, account_id) from the observed
-    EKS cluster. Returns empty strings until the observe-only Cluster syncs."""
+    """Extract (oidc_url, cluster_arn, oidc_host, account_id) from the composed
+    EKS XR's status.eks. Returns empty strings until the EKS XR surfaces those
+    typed fields (configuration-aws-eks v2.0.2+)."""
     if backup.get("enabled") != "yes":
         return "", "", "", ""
 
-    obs = observed.get("eks-cluster-observe")
+    obs = observed.get("eks-cluster")
     if not obs:
         return "", "", "", ""
 
     res = obs.resource if hasattr(obs, "resource") else obs
-    at_provider = res.get("status", {}).get("atProvider", {})
-    cluster_arn = at_provider.get("arn", "")
-
-    oidc_url = ""
-    identity = at_provider.get("identity", [])
-    if identity and len(identity) > 0:
-        oidc_list = identity[0].get("oidc", [])
-        if oidc_list and len(oidc_list) > 0:
-            oidc_url = oidc_list[0].get("issuer", "")
+    eks_status = res.get("status", {}).get("eks", {})
+    oidc_url = eks_status.get("oidcIssuerUrl", "")
+    cluster_arn = eks_status.get("clusterArn", "")
 
     oidc_host = oidc_url.replace("https://", "") if oidc_url else ""
 
@@ -83,33 +78,6 @@ def extract_oidc_info(backup: Dict, observed: Dict) -> tuple:
             account_id = parts[4]
 
     return oidc_url, cluster_arn, oidc_host, account_id
-
-
-def get_cluster_name(id_val: str, observed: Dict) -> str:
-    """Return the actual EKS cluster name from the observed EKS XR; fall back
-    to id_val before the XR reports a name."""
-    eks_xr = observed.get("eks-cluster")
-    if not eks_xr:
-        return id_val
-
-    res = eks_xr.resource if hasattr(eks_xr, "resource") else eks_xr
-    cluster_name = res.get("status", {}).get("eks", {}).get("clusterName", "")
-    return cluster_name if cluster_name else id_val
-
-
-def get_nodegroup_ref_name(observed: Dict) -> str:
-    """Return the NodeGroup resourceRef name from the EKS XR, or "" if the XR
-    has not yet enumerated its child resources."""
-    eks_xr = observed.get("eks-cluster")
-    if not eks_xr:
-        return ""
-
-    res = eks_xr.resource if hasattr(eks_xr, "resource") else eks_xr
-    refs = res.get("spec", {}).get("crossplane", {}).get("resourceRefs", [])
-    for ref in refs:
-        if ref.get("kind") == "NodeGroup":
-            return ref.get("name", "")
-    return ""
 
 
 def is_release_deployed(observed: Dict, name: str) -> bool:
@@ -176,12 +144,13 @@ def extract_bucket_name(location: str) -> str:
 
 
 def get_nodegroup_actual_type(observed: Dict) -> str:
-    """Return the first instance type reported by the observe-only NodeGroup,
-    or "" when the observe has not yet synced."""
-    obs = observed.get("nodegroup-observe")
+    """Return the running node-group instance type reported by the composed EKS
+    XR's status.eks.nodeGroup.instanceType, or "" until the XR surfaces it
+    (configuration-aws-eks v2.0.2+)."""
+    obs = observed.get("eks-cluster")
     if not obs:
         return ""
 
     res = obs.resource if hasattr(obs, "resource") else obs
-    types = res.get("status", {}).get("atProvider", {}).get("instanceTypes", [])
-    return types[0] if types else ""
+    node_group = res.get("status", {}).get("eks", {}).get("nodeGroup", {})
+    return node_group.get("instanceType", "")

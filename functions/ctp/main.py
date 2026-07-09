@@ -9,14 +9,17 @@ ordered section it corresponds to):
   eks.py                (02) EKS cluster
   uxp.py                (03) UXP v2 Helm Release
   usages.py             (04) deletion-order Usage guards
-  backup.py             (05) S3 bucket, observe Cluster, BackupConfig, RBAC, Schedule
+  backup.py             (05) S3 bucket, BackupConfig, RBAC, Schedule
   irsa.py               (06) OIDC Provider, Role, Policy, SA annotation, controller restart, restore
   licensing.py          (07) License Secret + License CR
   vpa.py                (08) VPA + metrics-server Helm Releases
   knative.py            (09) cert-manager + knative-operator + serving CR
   runtime_config.py     (10) UpboundRuntimeConfig (ProviderVPA + Knative caps)
-  nodegroup_observe.py  (11) Observe-only NodeGroup for instance-type drift
   status.py             (99) XR status writeback + ClaimConditions
+
+Cluster metadata (OIDC issuer/ARN, running node-group instance type) is read
+from the composed EKS XR's status.eks (configuration-aws-eks v2.0.2+), so no
+observe-only managed resources are composed here.
 """
 
 from datetime import datetime, timezone
@@ -30,15 +33,12 @@ from .irsa import add_irsa_resources
 from .knative import add_knative_resources
 from .licensing import add_license_resources
 from .network import add_network_resource
-from .nodegroup_observe import add_nodegroup_observe
 from .prelude import (
     build_manager_args,
     check_license_conflict,
     extract_bucket_name,
     extract_oidc_info,
-    get_cluster_name,
     get_nodegroup_actual_type,
-    get_nodegroup_ref_name,
     is_knative_serving_ready,
     is_license_applied,
     is_release_deployed,
@@ -108,9 +108,6 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
         oidc_provider_arn = f"arn:aws:iam::{account_id}:oidc-provider/{oidc_host}"
         role_arn = f"arn:aws:iam::{account_id}:role/{id_val}-backup-irsa"
 
-    cluster_name = get_cluster_name(id_val, observed_resources)
-    ng_ref_name = get_nodegroup_ref_name(observed_resources)
-
     uxp_deployed = is_release_deployed(observed_resources, "uxp-release")
     vpa_ready = is_release_deployed(observed_resources, "vpa-release")
     certmanager_ready = is_release_deployed(observed_resources, "knative-certmanager-release")
@@ -126,8 +123,7 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
 
     bucket_name = extract_bucket_name(backup.get("location", ""))
     # The backup bucket may live in a different region than the cluster (for
-    # cross-region DR). Everything that touches the bucket uses bucket_region;
-    # the observe-only EKS Cluster still uses the cluster region.
+    # cross-region DR). Everything that touches the bucket uses bucket_region.
     bucket_region = backup.get("bucketRegion") or region
 
     ng_actual_type = get_nodegroup_actual_type(observed_resources)
@@ -142,8 +138,8 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     add_usage_resources(rsp, id_val, config)
 
     if backup.get("enabled") == "yes":
-        add_backup_resources(rsp, id_val, region, bucket_region, provider_config,
-                             bucket_name, cluster_name, backup, uxp_deployed, config)
+        add_backup_resources(rsp, id_val, bucket_region, provider_config,
+                             bucket_name, backup, uxp_deployed, config)
 
     if backup.get("enabled") == "yes" and oidc_url and uxp_deployed:
         add_irsa_resources(rsp, id_val, bucket_region, provider_config,
@@ -165,10 +161,6 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
        (knative and knative.get("enabled") == "yes" and knative_fully_ready):
         add_runtime_config(rsp, id_val, vpa, knative, vpa_ready,
                            knative_fully_ready, config)
-
-    if ng_ref_name:
-        add_nodegroup_observe(rsp, id_val, ng_ref_name, region, provider_config,
-                              config)
 
     update_status(rsp, id_val, params, uxp_version, uxp_deployed, backup,
                   role_arn, bucket_name, observed_resources, nodes,

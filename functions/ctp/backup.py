@@ -1,4 +1,4 @@
-"""05-backup — S3 bucket, observe Cluster, BackupConfig, RBAC, BackupSchedule.
+"""05-backup — S3 bucket, BackupConfig, RBAC, BackupSchedule.
 
 All resources here are gated on backup.enabled == "yes" (the caller in
 main.py handles that gate). The BackupConfig/RBAC Objects are emitted
@@ -11,8 +11,8 @@ from crossplane.function import resource
 from .prelude import stamp
 
 
-def add_backup_resources(rsp, id_val, region, bucket_region, provider_config,
-                        bucket_name, cluster_name, backup, uxp_deployed, config):
+def add_backup_resources(rsp, id_val, bucket_region, provider_config,
+                        bucket_name, backup, uxp_deployed, config):
     # S3 Bucket — import-only. Delete is intentionally absent from
     # managementPolicies: deleting the XR removes this MR but leaves the AWS
     # bucket (and the backup data) intact. bucket_region may differ from the
@@ -41,34 +41,6 @@ def add_backup_resources(rsp, id_val, region, bucket_region, provider_config,
     }
     stamp(bucket, config, aws_tags=True)
     resource.update(rsp.desired.resources["backup-bucket"], bucket)
-
-    # Observe-only EKS Cluster — sources OIDC issuer URL + ARN for IRSA.
-    # Falls back to id_val until the EKS XR reports the real cluster name.
-    cluster_observe = {
-        "apiVersion": "eks.aws.m.upbound.io/v1beta1",
-        "kind": "Cluster",
-        "metadata": {
-            "name": f"{id_val}-observe",
-            "namespace": "default",
-            "annotations": {
-                "crossplane.io/composition-resource-name": "eks-cluster-observe",
-                "crossplane.io/external-name": cluster_name
-            }
-        },
-        "spec": {
-            "managementPolicies": ["Observe"],
-            "forProvider": {
-                "region": region
-            },
-            "providerConfigRef": {
-                "name": provider_config,
-                "kind": "ProviderConfig"
-            }
-        }
-    }
-    # Observe-only: tags would be ignored, so annotations only.
-    stamp(cluster_observe, config)
-    resource.update(rsp.desired.resources["eks-cluster-observe"], cluster_observe)
 
     # BackupConfig — the thanos objstore library requires config.endpoint;
     # without it the S3 client fails with "no s3 endpoint in config file".
