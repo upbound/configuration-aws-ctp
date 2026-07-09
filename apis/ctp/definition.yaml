@@ -58,6 +58,40 @@ spec:
                     required:
                     - count
                     - instanceType
+                  network:
+                    type: object
+                    description: >-
+                      VPC network topology for the control plane. Optional — defaults to a
+                      resilient three-AZ layout (public + private subnets across
+                      <region>a/<region>b/<region>c). Values are passed through to the
+                      underlying configuration-aws-network Network.
+                    properties:
+                      vpcCidrBlock:
+                        type: string
+                        description: CIDR block for the VPC.
+                        default: 192.168.0.0/16
+                      subnets:
+                        type: array
+                        description: >-
+                          Subnets to create in the VPC. When omitted, a three-AZ layout of
+                          public and private /19 subnets is derived from the region. When
+                          provided, ensure the subnet CIDRs fit within vpcCidrBlock.
+                        items:
+                          type: object
+                          properties:
+                            availabilityZone:
+                              type: string
+                            type:
+                              type: string
+                              enum:
+                              - public
+                              - private
+                            cidrBlock:
+                              type: string
+                          required:
+                          - availabilityZone
+                          - type
+                          - cidrBlock
                   accessConfig:
                     type: object
                     description: EKS access configuration.
@@ -104,6 +138,12 @@ spec:
                         type: string
                         description: S3 bucket ARN for backup storage. Required when backup is enabled. The bucket is created if it does not already exist and is never deleted by Crossplane.
                         pattern: '^arn:aws:s3:::[a-z0-9][a-z0-9.-]*[a-z0-9]$'
+                      bucketRegion:
+                        type: string
+                        description: >-
+                          AWS region for the backup S3 bucket. Defaults to the control plane's
+                          region. Set this to a different region than the cluster for cross-region
+                          disaster recovery, so backups survive a full outage of the cluster's region.
                       schedule:
                         type: string
                         description: >-
@@ -189,12 +229,12 @@ spec:
                     items:
                       type: string
                       enum:
-                        - "*"
-                        - Create
-                        - Observe
-                        - Update
-                        - Delete
-                        - LateInitialize
+                      - "*"
+                      - Create
+                      - Observe
+                      - Update
+                      - Delete
+                      - LateInitialize
                     default:
                     - "*"
                 required:

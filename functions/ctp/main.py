@@ -72,6 +72,7 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     provider_config = params.get("providerConfigName", "default")
     version = params.get("version", "1.34")
     nodes = params.get("nodes", {})
+    network_param = params.get("network", {})
     access_config = params.get("accessConfig", {
         "bootstrapClusterCreatorAdminPermissions": True,
         "authenticationMode": "API_AND_CONFIG_MAP"
@@ -124,24 +125,29 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     mgr_args = build_manager_args(vpa, knative, vpa_ready, knative_fully_ready, features_licensed)
 
     bucket_name = extract_bucket_name(backup.get("location", ""))
+    # The backup bucket may live in a different region than the cluster (for
+    # cross-region DR). Everything that touches the bucket uses bucket_region;
+    # the observe-only EKS Cluster still uses the cluster region.
+    bucket_region = backup.get("bucketRegion") or region
 
     ng_actual_type = get_nodegroup_actual_type(observed_resources)
     ng_type_mismatch = bool(ng_actual_type) and ng_actual_type != nodes.get("instanceType", "")
 
     # --- Compose resources ---
-    add_network_resource(rsp, id_val, region, provider_config, mgmt_policies, config)
+    add_network_resource(rsp, id_val, region, provider_config, mgmt_policies,
+                         network_param, config)
     add_eks_resource(rsp, id_val, region, provider_config, version, nodes,
                      access_config, mgmt_policies, iam_param, config)
     add_uxp_release(rsp, id_val, uxp_version, uxp_deployed, mgr_args, config)
     add_usage_resources(rsp, id_val, config)
 
     if backup.get("enabled") == "yes":
-        add_backup_resources(rsp, id_val, region, provider_config, bucket_name,
-                             cluster_name, backup, uxp_deployed, config)
+        add_backup_resources(rsp, id_val, region, bucket_region, provider_config,
+                             bucket_name, cluster_name, backup, uxp_deployed, config)
 
     if backup.get("enabled") == "yes" and oidc_url and uxp_deployed:
-        add_irsa_resources(rsp, id_val, region, provider_config, oidc_host,
-                           oidc_provider_arn, role_arn, bucket_name,
+        add_irsa_resources(rsp, id_val, bucket_region, provider_config,
+                           oidc_host, oidc_provider_arn, role_arn, bucket_name,
                            observed_resources, install_from, account_id, config)
 
     if license_param and not license_conflict:

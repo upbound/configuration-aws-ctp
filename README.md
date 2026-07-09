@@ -66,6 +66,7 @@ spec:
 | `id` | yes | Identifier other objects use to refer to this control plane. |
 | `region` | yes | AWS region. |
 | `nodes` | yes | EKS node group config (`count`, `instanceType`, default `t3.small`). |
+| `network` | no | VPC topology (`vpcCidrBlock`, `subnets`). Defaults to a resilient three-AZ layout across `<region>a/b/c`. |
 | `version` | no | Kubernetes version (`1.31`–`1.35`, default `1.34`). |
 | `providerConfigName` | no | ProviderConfig to use (default `default`). |
 | `accessConfig` | no | EKS authentication mode and cluster-creator admin bootstrap. |
@@ -85,6 +86,13 @@ it does not already exist and is **never deleted** by Crossplane. Set `backup.sc
 shortcuts like `@daily`, 5-field cron, or `@every` durations) to create a `BackupSchedule`, and
 `backup.installFrom` to restore an existing backup at initial provisioning. See
 [`examples/controlplane/with-backup.yaml`](examples/controlplane/with-backup.yaml).
+
+By default the backup bucket is created in the control plane's `region`. Set
+`backup.bucketRegion` to a **different** region to keep backups off the cluster's region, so a
+full regional outage does not take out both the control plane and its backups — the basis for
+cross-region disaster recovery. The observe-only EKS cluster and all other resources stay in the
+control plane `region`; only the S3 bucket and the UXP `BackupConfig`/`Restore` storage client
+use `bucketRegion`.
 
 UXP enterprise features (`license`, `knative`, `providerVerticalPodAutoscaling`) require a UXP
 license Secret on the management cluster — see the header of `with-backup.yaml` for how to

@@ -70,6 +70,106 @@ spec:
 apiVersion: meta.dev.upbound.io/v1alpha1
 kind: CompositionTest
 metadata:
+  name: network-three-az-default
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+  assertResources:
+  # No network param -> resilient three-AZ default: public + private /19
+  # subnets across <region>a/b/c inside a 192.168.0.0/16 VPC.
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: Network
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        vpcCidrBlock: 192.168.0.0/16
+        subnets:
+        - availabilityZone: us-east-1a
+          cidrBlock: 192.168.0.0/19
+          type: public
+        - availabilityZone: us-east-1b
+          cidrBlock: 192.168.32.0/19
+          type: public
+        - availabilityZone: us-east-1c
+          cidrBlock: 192.168.64.0/19
+          type: public
+        - availabilityZone: us-east-1a
+          cidrBlock: 192.168.96.0/19
+          type: private
+        - availabilityZone: us-east-1b
+          cidrBlock: 192.168.128.0/19
+          type: private
+        - availabilityZone: us-east-1c
+          cidrBlock: 192.168.160.0/19
+          type: private
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: network-custom-passthrough
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: eu-central-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        network:
+          vpcCidrBlock: 10.0.0.0/16
+          subnets:
+          - availabilityZone: eu-central-1a
+            type: public
+            cidrBlock: 10.0.0.0/20
+          - availabilityZone: eu-central-1b
+            type: private
+            cidrBlock: 10.0.16.0/20
+  assertResources:
+  # Custom network params pass straight through to the Network XR.
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: Network
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        vpcCidrBlock: 10.0.0.0/16
+        subnets:
+        - availabilityZone: eu-central-1a
+          type: public
+          cidrBlock: 10.0.0.0/20
+        - availabilityZone: eu-central-1b
+          type: private
+          cidrBlock: 10.0.16.0/20
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
   name: backup-enabled
 spec:
   compositionPath: apis/ctp/composition.yaml
@@ -123,6 +223,62 @@ spec:
     kind: Object
     metadata:
       name: test-cp-backup-rbac-binding
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: backup-cross-region
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        backup:
+          enabled: "yes"
+          location: arn:aws:s3:::my-dr-backup-bucket
+          bucketRegion: us-west-2
+  assertResources:
+  # Bucket lives in the DR region (bucketRegion), not the cluster region.
+  - apiVersion: s3.aws.m.upbound.io/v1beta1
+    kind: Bucket
+    metadata:
+      name: test-cp-backup-bucket
+    spec:
+      forProvider:
+        region: us-west-2
+  # BackupConfig points the S3 client at the bucket region.
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-backup-config
+    spec:
+      forProvider:
+        manifest:
+          spec:
+            objectStorage:
+              config:
+                region: us-west-2
+  # Observe-only Cluster still uses the cluster region.
+  - apiVersion: eks.aws.m.upbound.io/v1beta1
+    kind: Cluster
+    metadata:
+      name: test-cp-observe
+    spec:
+      forProvider:
+        region: us-east-1
 ---
 apiVersion: meta.dev.upbound.io/v1alpha1
 kind: CompositionTest
