@@ -200,10 +200,6 @@ spec:
     spec:
       forProvider:
         region: us-east-1
-  - apiVersion: eks.aws.m.upbound.io/v1beta1
-    kind: Cluster
-    metadata:
-      name: test-cp-observe
   - apiVersion: kubernetes.m.crossplane.io/v1alpha1
     kind: Object
     metadata:
@@ -271,14 +267,6 @@ spec:
             objectStorage:
               config:
                 region: us-west-2
-  # Observe-only Cluster still uses the cluster region.
-  - apiVersion: eks.aws.m.upbound.io/v1beta1
-    kind: Cluster
-    metadata:
-      name: test-cp-observe
-    spec:
-      forProvider:
-        region: us-east-1
 ---
 apiVersion: meta.dev.upbound.io/v1alpha1
 kind: CompositionTest
@@ -539,22 +527,22 @@ spec:
           enabled: "yes"
           location: arn:aws:s3:::my-backup-bucket
   observedResources:
-  - apiVersion: eks.aws.m.upbound.io/v1beta1
-    kind: Cluster
+  # Cluster metadata (OIDC issuer + ARN) now comes from the composed EKS XR's
+  # status.eks (configuration-aws-eks v2.0.2+), not an observe-only Cluster MR.
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: EKS
     metadata:
-      name: test-cp-observe
+      name: test-cp
       namespace: default
       annotations:
-        crossplane.io/composition-resource-name: eks-cluster-observe
+        crossplane.io/composition-resource-name: eks-cluster
     spec:
-      forProvider:
-        region: us-east-1
+      parameters:
+        id: test-cp
     status:
-      atProvider:
-        arn: arn:aws:eks:us-east-1:123456789012:cluster/test-cp-abc12345
-        identity:
-        - oidc:
-          - issuer: https://oidc.eks.us-east-1.amazonaws.com/id/ABC123XYZ
+      eks:
+        clusterArn: arn:aws:eks:us-east-1:123456789012:cluster/test-cp-abc12345
+        oidcIssuerUrl: https://oidc.eks.us-east-1.amazonaws.com/id/ABC123XYZ
   - apiVersion: helm.m.crossplane.io/v1beta1
     kind: Release
     metadata:
@@ -925,3 +913,59 @@ spec:
           spec:
             objectStorage:
               bucket: new-cp-bucket
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: node-type-drift
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+  observedResources:
+  # Running node-group instance type (t3.large) differs from the desired
+  # t3.small. It is read from the composed EKS XR's status.eks.nodeGroup,
+  # driving the NodeGroupTypeImmutable condition on the XR status.
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: EKS
+    metadata:
+      name: test-cp
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: eks-cluster
+    spec:
+      parameters:
+        id: test-cp
+    status:
+      eks:
+        nodeGroup:
+          instanceType: t3.large
+  assertResources:
+  # The composition renders normally while reporting the drift on status;
+  # the EKS XR is still composed with the desired instance type.
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: EKS
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        nodes:
+          instanceType: t3.small
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-uxp
