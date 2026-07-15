@@ -1,20 +1,30 @@
-# E2E test: ControlPlane with backup + enterprise license.
+# E2E test: ControlPlane with IRSA-based S3 backup.
 # Spins up a real EKS cluster via the configuration-aws-ctp composition,
-# installs UXP, wires IRSA backup, and applies an enterprise license.
-# Requires:
-#   - An AWS ProviderConfig named "default" with valid credentials
-#     (created automatically from initResources, but the referenced Secret
-#     "aws-creds" in crossplane-system must already exist on the test
-#     control plane).
-#   - A Secret named "uxp-license" in namespace "default" whose key
-#     "license.json" contains the UXP license JSON.
-#   - Sufficient AWS quotas for one t3.small two-node EKS cluster in us-east-1.
+# installs UXP, and wires IRSA backup.
 #
+# Credentials: the AWS ProviderConfig "default" uses Upbound-injected identity
+# (source: Upbound) federated to the solutions e2e AWS role, so no
+# pre-provisioned Secret is required on the ephemeral test control plane.
+#
+# Backup is enabled but NO license is supplied, and that is sufficient here:
+# this test asserts only that the composition wires backup up and the
+# ControlPlane XR reaches Ready. The S3 Bucket, BackupConfig/BackupSchedule and
+# RBAC are provider-kubernetes Objects that go Ready once their manifests apply
+# (UXP installs the admin.uxp.upbound.io CRDs regardless of licensing) — verified
+# green with no license.
+#
+# NOTE: actually EXECUTING a backup requires a UXP Standard-plan (or above)
+# license — https://docs.upbound.io/manuals/uxp/howtos/backup-and-restore/. This
+# test does not trigger or assert a real backup run, so it does not need one. To
+# cover an end-to-end backup, add a valid "uxp-license" Secret + `license` block
+# and assert on an actual backup.
+#
+# Requires sufficient AWS quotas for one t3.small two-node EKS cluster.
 # Expected runtime: 25-45 minutes (EKS provisioning + UXP install + IRSA wiring).
 apiVersion: meta.dev.upbound.io/v1alpha1
 kind: E2ETest
 metadata:
-  name: controlplane-with-backup-and-license
+  name: controlplane-with-backup
 spec:
   crossplane:
     autoUpgrade:
@@ -23,18 +33,18 @@ spec:
   - Ready
   timeoutSeconds: 3600
   cleanupTimeoutSeconds: 1200
-  initResources:
-  - apiVersion: aws.upbound.io/v1beta1
+  extraResources:
+  - apiVersion: aws.m.upbound.io/v1beta1
     kind: ProviderConfig
     metadata:
       name: default
+      namespace: default
     spec:
       credentials:
-        source: Secret
-        secretRef:
-          namespace: crossplane-system
-          name: aws-creds
-          key: credentials
+        source: Upbound
+        upbound:
+          webIdentity:
+            roleARN: arn:aws:iam::609897127049:role/solutions-e2e-provider-aws
   manifests:
   - apiVersion: aws.platform.upbound.io/v1alpha1
     kind: ControlPlane
@@ -51,8 +61,4 @@ spec:
         backup:
           enabled: "yes"
           location: arn:aws:s3:::upbound-e2e-test-cp-backup
-        license:
-          secretRef:
-            name: uxp-license
-            namespace: default
   skipDelete: false
