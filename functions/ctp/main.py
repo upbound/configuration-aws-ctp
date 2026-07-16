@@ -8,6 +8,7 @@ ordered section it corresponds to):
   network.py            (01) VPC + subnets
   eks.py                (02) EKS cluster
   uxp.py                (03) UXP v2 Helm Release
+  lbcontroller.py       (03b) AWS Load Balancer Controller (Pod Identity, k8gb)
   usages.py             (04) deletion-order Usage guards
   backup.py             (05) S3 bucket, BackupConfig, RBAC, Schedule
   irsa.py               (06) OIDC Provider, Role, Policy, SA annotation, controller restart, restore
@@ -34,17 +35,20 @@ from .eks import add_eks_resource
 from .ingress import add_ingress_resources
 from .irsa import add_irsa_resources
 from .knative import add_knative_resources
+from .lbcontroller import add_lbcontroller_resources
 from .licensing import add_license_resources
 from .network import add_network_resource
 from .prelude import (
     build_manager_args,
     check_license_conflict,
     extract_bucket_name,
+    extract_cluster_identity,
     extract_oidc_info,
     get_nodegroup_actual_type,
     is_knative_serving_ready,
     is_license_applied,
     is_release_deployed,
+    is_resource_ready,
 )
 from .runtime_config import add_runtime_config
 from .status import update_status
@@ -120,6 +124,12 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     vpa_ready = is_release_deployed(observed_resources, "vpa-release")
     certmanager_ready = is_release_deployed(observed_resources, "certmanager-release")
     ingress_ready = is_release_deployed(observed_resources, "ingress-nginx-release")
+
+    # Cluster name/account for EKS Pod Identity (k8gb LB controller), read from
+    # the EKS XR's status.eks — independent of backup.
+    cluster_name, cluster_account_id, _cluster_region = extract_cluster_identity(observed_resources)
+    lb_identity_ready = is_resource_ready(observed_resources, "lb-controller-pia")
+    lb_release_deployed = is_release_deployed(observed_resources, "lb-controller-release")
     knative_op_ready = is_release_deployed(observed_resources, "knative-operator-release")
     knative_deps_ready = certmanager_ready and knative_op_ready
     knative_serving_ready = is_knative_serving_ready(observed_resources)
@@ -144,7 +154,8 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     add_eks_resource(rsp, id_val, region, provider_config, version, nodes,
                      access_config, mgmt_policies, iam_param, config)
     add_uxp_release(rsp, id_val, uxp_version, uxp_deployed, mgr_args, config)
-    add_usage_resources(rsp, id_val, config)
+    add_usage_resources(rsp, id_val, config, k8gb_enabled=k8gb_enabled,
+                        argocd_enabled=argocd_enabled)
 
     # cert-manager is always installed (free component, no license gate) so the
     # k8gb/argocd add-ons can rely on it for Ingress TLS independently of knative.
@@ -154,6 +165,13 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     # control planes do not pay for an idle cloud load balancer.
     if k8gb_enabled or argocd_enabled:
         add_ingress_resources(rsp, id_val, ingress_ready, config)
+
+    # AWS Load Balancer Controller (Pod Identity) — prerequisite for the k8gb
+    # CoreDNS UDP+TCP:53 NLB.
+    if k8gb_enabled:
+        add_lbcontroller_resources(rsp, id_val, provider_config, cluster_name,
+                                   cluster_account_id, region, lb_identity_ready,
+                                   lb_release_deployed, config)
 
     if backup.get("enabled") == "yes":
         add_backup_resources(rsp, id_val, bucket_region, provider_config,

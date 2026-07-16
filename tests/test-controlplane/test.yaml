@@ -1019,3 +1019,129 @@ spec:
           name: ingress-nginx
           repository: https://kubernetes.github.io/ingress-nginx
         namespace: ingress-nginx
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: k8gb-lbcontroller-iam
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        k8gb:
+          enabled: "yes"
+  assertResources:
+  # Before the EKS cluster name is known, only the IAM Role/Policy + the Usage
+  # guard render (Pod Identity + Release wait for status.eks). nginx also comes
+  # in because k8gb pulls it.
+  - apiVersion: iam.aws.m.upbound.io/v1beta1
+    kind: Role
+    metadata:
+      name: test-cp-lb-controller
+  - apiVersion: iam.aws.m.upbound.io/v1beta1
+    kind: Policy
+    metadata:
+      name: test-cp-lb-controller
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-ingress-nginx
+  - apiVersion: protection.crossplane.io/v1beta1
+    kind: Usage
+    metadata:
+      name: test-cp-usage-lbcontroller-eks
+    spec:
+      of:
+        kind: EKS
+      by:
+        kind: Release
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: k8gb-lbcontroller-podidentity
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        k8gb:
+          enabled: "yes"
+  observedResources:
+  # EKS cluster name/account come from status.eks.clusterArn.
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: EKS
+    metadata:
+      name: test-cp
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: eks-cluster
+    spec:
+      parameters:
+        id: test-cp
+    status:
+      eks:
+        clusterArn: arn:aws:eks:us-east-1:123456789012:cluster/test-cp-abc12345
+  # Pod Identity association is Ready -> controller scales to 2 replicas.
+  - apiVersion: eks.aws.m.upbound.io/v1beta1
+    kind: PodIdentityAssociation
+    metadata:
+      name: test-cp-lb-controller-pia
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: lb-controller-pia
+    status:
+      conditions:
+      - type: Ready
+        status: "True"
+  assertResources:
+  - apiVersion: eks.aws.m.upbound.io/v1beta1
+    kind: PodIdentityAssociation
+    metadata:
+      name: test-cp-lb-controller-pia
+    spec:
+      forProvider:
+        clusterName: test-cp-abc12345
+        namespace: kube-system
+        serviceAccount: aws-load-balancer-controller
+        roleArn: arn:aws:iam::123456789012:role/test-cp-lb-controller
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-lb-controller
+    spec:
+      forProvider:
+        chart:
+          name: aws-load-balancer-controller
+          repository: https://aws.github.io/eks-charts
+        namespace: kube-system
+        values:
+          clusterName: test-cp-abc12345
+          replicaCount: 2
