@@ -13,7 +13,8 @@ ordered section it corresponds to):
   irsa.py               (06) OIDC Provider, Role, Policy, SA annotation, controller restart, restore
   licensing.py          (07) License Secret + License CR
   vpa.py                (08) VPA + metrics-server Helm Releases
-  knative.py            (09) cert-manager + knative-operator + serving CR
+  certmanager.py        (09a) always-on cert-manager Helm Release
+  knative.py            (09) knative-operator + serving CR
   runtime_config.py     (10) UpboundRuntimeConfig (ProviderVPA + Knative caps)
   status.py             (99) XR status writeback + ClaimConditions
 
@@ -28,6 +29,7 @@ from crossplane.function import resource
 from crossplane.function.proto.v1 import run_function_pb2 as fnv1
 
 from .backup import add_backup_resources
+from .certmanager import add_certmanager_resources
 from .eks import add_eks_resource
 from .irsa import add_irsa_resources
 from .knative import add_knative_resources
@@ -110,7 +112,7 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
 
     uxp_deployed = is_release_deployed(observed_resources, "uxp-release")
     vpa_ready = is_release_deployed(observed_resources, "vpa-release")
-    certmanager_ready = is_release_deployed(observed_resources, "knative-certmanager-release")
+    certmanager_ready = is_release_deployed(observed_resources, "certmanager-release")
     knative_op_ready = is_release_deployed(observed_resources, "knative-operator-release")
     knative_deps_ready = certmanager_ready and knative_op_ready
     knative_serving_ready = is_knative_serving_ready(observed_resources)
@@ -137,6 +139,10 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     add_uxp_release(rsp, id_val, uxp_version, uxp_deployed, mgr_args, config)
     add_usage_resources(rsp, id_val, config)
 
+    # cert-manager is always installed (free component, no license gate) so the
+    # k8gb/argocd add-ons can rely on it for Ingress TLS independently of knative.
+    add_certmanager_resources(rsp, id_val, certmanager_ready, config)
+
     if backup.get("enabled") == "yes":
         add_backup_resources(rsp, id_val, bucket_region, provider_config,
                              bucket_name, backup, uxp_deployed, config)
@@ -153,7 +159,7 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
         add_vpa_resources(rsp, id_val, vpa, vpa_ready, config)
 
     if knative and knative.get("enabled") == "yes" and features_licensed:
-        add_knative_resources(rsp, id_val, certmanager_ready, knative_op_ready,
+        add_knative_resources(rsp, id_val, knative_op_ready,
                               knative_deps_ready, knative_serving_ready,
                               observed_resources, config)
 
