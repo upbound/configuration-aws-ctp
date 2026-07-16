@@ -130,3 +130,17 @@ def add_usage_resources(rsp, id_val, config, k8gb_enabled=False,
             f"{id_val}-lb-controller",
             "AWS Load Balancer Controller Release must finish uninstalling before the EKS cluster is deleted",
             config)
+        _emit_eks_usage(
+            rsp, id_val, "usage-k8gb-eks",
+            "helm.m.crossplane.io/v1beta1", "Release",
+            f"{id_val}-k8gb",
+            "k8gb Release must finish uninstalling before the EKS cluster is deleted",
+            config)
+        # The observe-only CoreDNS Object also guards the EKS cluster so it does
+        # not orphan-finalize when the cluster/kubeconfig is torn out first.
+        _emit_eks_usage(
+            rsp, id_val, "usage-k8gb-coredns-eks",
+            "kubernetes.m.crossplane.io/v1alpha1", "Object",
+            f"{id_val}-k8gb-coredns",
+            "k8gb CoreDNS observe Object must be removed before the EKS cluster is deleted",
+            config)

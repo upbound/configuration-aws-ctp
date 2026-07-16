@@ -1145,3 +1145,130 @@ spec:
         values:
           clusterName: test-cp-abc12345
           replicaCount: 2
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: with-k8gb
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        k8gb:
+          enabled: "yes"
+          dnsZone: gslb.example.com
+          parentZone: example.com
+  assertResources:
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-k8gb
+      annotations:
+        crossplane.io/external-name: k8gb
+    spec:
+      forProvider:
+        chart:
+          name: k8gb
+          repository: https://www.k8gb.io
+          version: v0.15.0
+        namespace: k8gb
+        values:
+          k8gb:
+            clusterGeoTag: aws-us-east-1-test-cp
+            dnsZones:
+            - loadBalancedZone: gslb.example.com
+              parentZone: example.com
+          extdns:
+            enabled: false
+          coredns:
+            serviceType: LoadBalancer
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-k8gb-coredns
+    spec:
+      managementPolicies:
+      - Observe
+      forProvider:
+        manifest:
+          kind: Service
+          metadata:
+            name: k8gb-coredns
+            namespace: k8gb
+  - apiVersion: protection.crossplane.io/v1beta1
+    kind: Usage
+    metadata:
+      name: test-cp-usage-k8gb-eks
+  - apiVersion: protection.crossplane.io/v1beta1
+    kind: Usage
+    metadata:
+      name: test-cp-usage-k8gb-coredns-eks
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: with-k8gb-endpoint
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        k8gb:
+          enabled: "yes"
+          dnsZone: gslb.example.com
+          parentZone: example.com
+  observedResources:
+  # CoreDNS observe Object reports the provisioned NLB endpoint.
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-k8gb-coredns
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: k8gb-coredns-observe
+    status:
+      atProvider:
+        manifest:
+          status:
+            loadBalancer:
+              ingress:
+              - hostname: k8gb-nlb-abc123.elb.us-east-1.amazonaws.com
+  assertResources:
+  # The XR surfaces the k8gb status contract for FleetGslb.
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    status:
+      controlplane:
+        k8gb:
+          enabled: "yes"
+          coreDNSEndpoint: k8gb-nlb-abc123.elb.us-east-1.amazonaws.com
+          delegationRecord: "gslb.example.com. NS gslb-ns-gslb-example-com-aws-us-east-1-test-cp.example.com. ; gslb-ns-gslb-example-com-aws-us-east-1-test-cp.example.com. A k8gb-nlb-abc123.elb.us-east-1.amazonaws.com"

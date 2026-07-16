@@ -9,6 +9,7 @@ ordered section it corresponds to):
   eks.py                (02) EKS cluster
   uxp.py                (03) UXP v2 Helm Release
   lbcontroller.py       (03b) AWS Load Balancer Controller (Pod Identity, k8gb)
+  k8gb.py               (04b) k8gb operator + CoreDNS producer
   usages.py             (04) deletion-order Usage guards
   backup.py             (05) S3 bucket, BackupConfig, RBAC, Schedule
   irsa.py               (06) OIDC Provider, Role, Policy, SA annotation, controller restart, restore
@@ -34,6 +35,7 @@ from .certmanager import add_certmanager_resources
 from .eks import add_eks_resource
 from .ingress import add_ingress_resources
 from .irsa import add_irsa_resources
+from .k8gb import add_k8gb_resources
 from .knative import add_knative_resources
 from .lbcontroller import add_lbcontroller_resources
 from .licensing import add_license_resources
@@ -41,6 +43,8 @@ from .network import add_network_resource
 from .prelude import (
     build_manager_args,
     check_license_conflict,
+    derive_k8gb_ext_geo_tags,
+    derive_k8gb_geo_tag,
     extract_bucket_name,
     extract_cluster_identity,
     extract_oidc_info,
@@ -106,6 +110,15 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
 
     license_conflict = check_license_conflict(id_val, license_param, all_ctps)
 
+    # k8gb geo tags: this cluster's unique tag, plus same-cloud k8gb peers on
+    # the same dnsZone (cross-cloud peers are injected later by FleetGslb).
+    k8gb_geo_tag = ""
+    k8gb_ext_geo_tags = ""
+    if k8gb_enabled:
+        k8gb_geo_tag = derive_k8gb_geo_tag(k8gb, region, id_val)
+        k8gb_ext_geo_tags = derive_k8gb_ext_geo_tags(
+            id_val, k8gb.get("dnsZone", ""), k8gb_geo_tag, all_ctps)
+
     observed_resources = {
         name: resource.struct_to_dict(res.resource)
         for name, res in req.observed.resources.items()
@@ -130,6 +143,7 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     cluster_name, cluster_account_id, _cluster_region = extract_cluster_identity(observed_resources)
     lb_identity_ready = is_resource_ready(observed_resources, "lb-controller-pia")
     lb_release_deployed = is_release_deployed(observed_resources, "lb-controller-release")
+    k8gb_deployed = is_release_deployed(observed_resources, "k8gb-release")
     knative_op_ready = is_release_deployed(observed_resources, "knative-operator-release")
     knative_deps_ready = certmanager_ready and knative_op_ready
     knative_serving_ready = is_knative_serving_ready(observed_resources)
@@ -172,6 +186,8 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
         add_lbcontroller_resources(rsp, id_val, provider_config, cluster_name,
                                    cluster_account_id, region, lb_identity_ready,
                                    lb_release_deployed, config)
+        add_k8gb_resources(rsp, id_val, k8gb, k8gb_geo_tag, k8gb_ext_geo_tags,
+                           k8gb_deployed, config)
 
     if backup.get("enabled") == "yes":
         add_backup_resources(rsp, id_val, bucket_region, provider_config,
@@ -201,4 +217,4 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     update_status(rsp, id_val, params, uxp_version, uxp_deployed, backup,
                   role_arn, bucket_name, observed_resources, nodes,
                   ng_actual_type, ng_type_mismatch, vpa, knative,
-                  license_conflict, config)
+                  k8gb, k8gb_geo_tag, license_conflict, config)
