@@ -10,6 +10,7 @@ ordered section it corresponds to):
   uxp.py                (03) UXP v2 Helm Release
   lbcontroller.py       (03b) AWS Load Balancer Controller (Pod Identity, k8gb)
   k8gb.py               (04b) k8gb operator + CoreDNS producer
+  argo.py               (05b) ArgoCD add-on (UI Ingress + app-of-apps)
   usages.py             (04) deletion-order Usage guards
   backup.py             (05) S3 bucket, BackupConfig, RBAC, Schedule
   irsa.py               (06) OIDC Provider, Role, Policy, SA annotation, controller restart, restore
@@ -30,6 +31,7 @@ from datetime import datetime, timezone
 from crossplane.function import resource
 from crossplane.function.proto.v1 import run_function_pb2 as fnv1
 
+from .argo import add_argocd_resources
 from .backup import add_backup_resources
 from .certmanager import add_certmanager_resources
 from .eks import add_eks_resource
@@ -144,6 +146,7 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     lb_identity_ready = is_resource_ready(observed_resources, "lb-controller-pia")
     lb_release_deployed = is_release_deployed(observed_resources, "lb-controller-release")
     k8gb_deployed = is_release_deployed(observed_resources, "k8gb-release")
+    argocd_deployed = is_release_deployed(observed_resources, "argocd-release")
     knative_op_ready = is_release_deployed(observed_resources, "knative-operator-release")
     knative_deps_ready = certmanager_ready and knative_op_ready
     knative_serving_ready = is_knative_serving_ready(observed_resources)
@@ -188,6 +191,10 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
                                    lb_release_deployed, config)
         add_k8gb_resources(rsp, id_val, k8gb, k8gb_geo_tag, k8gb_ext_geo_tags,
                            k8gb_deployed, config)
+
+    if argocd_enabled:
+        add_argocd_resources(rsp, id_val, argocd, argocd_deployed,
+                             certmanager_ready, config)
 
     if backup.get("enabled") == "yes":
         add_backup_resources(rsp, id_val, bucket_region, provider_config,
