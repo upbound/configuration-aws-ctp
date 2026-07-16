@@ -22,8 +22,9 @@ ordered section it corresponds to):
   status.py             (99) XR status writeback + ClaimConditions
 
 Cluster metadata (OIDC issuer/ARN, running node-group instance type) is read
-from the composed EKS XR's status.eks (configuration-aws-eks v2.0.2+), so no
-observe-only managed resources are composed here.
+from the composed EKS XR's status.eks (configuration-aws-eks v2.0.2+); the only
+observe-only resource composed here is the k8gb CoreDNS Service Object (to read
+its LoadBalancer endpoint for the status contract).
 """
 
 from datetime import datetime, timezone
