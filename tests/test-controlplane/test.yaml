@@ -1109,6 +1109,16 @@ spec:
     status:
       eks:
         clusterArn: arn:aws:eks:us-east-1:123456789012:cluster/test-cp-abc12345
+  # VPC ID comes from the Network XR status (avoids controller IMDS discovery).
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: Network
+    metadata:
+      name: test-cp
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: network
+    status:
+      vpcId: vpc-0abc123
   # Pod Identity association is Ready -> controller scales to 2 replicas.
   - apiVersion: eks.aws.m.upbound.io/v1beta1
     kind: PodIdentityAssociation
@@ -1144,6 +1154,8 @@ spec:
         namespace: kube-system
         values:
           clusterName: test-cp-abc12345
+          vpcId: vpc-0abc123
+          enableServiceMutatorWebhook: false
           replicaCount: 2
 ---
 apiVersion: meta.dev.upbound.io/v1alpha1

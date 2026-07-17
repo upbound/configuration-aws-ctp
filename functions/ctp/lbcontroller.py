@@ -249,7 +249,7 @@ _LB_CONTROLLER_POLICY = {
 
 
 def add_lbcontroller_resources(rsp, id_val, provider_config, cluster_name,
-                               account_id, region, lb_identity_ready,
+                               account_id, region, vpc_id, lb_identity_ready,
                                lb_release_deployed, config):
     role_name = f"{id_val}-lb-controller"
 
@@ -336,9 +336,12 @@ def add_lbcontroller_resources(rsp, id_val, provider_config, cluster_name,
     stamp(attachment, config)
     resource.update(rsp.desired.resources["lb-controller-attach"], attachment)
 
-    # PodIdentityAssociation + Helm Release need the EKS cluster name, which is
-    # only known once the EKS XR surfaces status.eks.clusterArn.
-    if not (cluster_name and account_id):
+    # PodIdentityAssociation + Helm Release need the EKS cluster name (from the
+    # EKS XR's status.eks) and the VPC ID (from the Network XR's status). The
+    # controller crashloops without an explicit vpcId — IMDS VPC discovery
+    # returns 401 for pods under EKS IMDSv2 hop limits — so don't render the
+    # release until the VPC ID is known.
+    if not (cluster_name and account_id and vpc_id):
         return
 
     role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
@@ -398,6 +401,15 @@ def add_lbcontroller_resources(rsp, id_val, provider_config, cluster_name,
                 "values": {
                     "clusterName": cluster_name,
                     "region": region,
+                    # Explicit VPC ID so the controller does not rely on IMDS
+                    # (which 401s for pods under EKS IMDSv2 hop limits).
+                    "vpcId": vpc_id,
+                    # We annotate our LoadBalancer Services explicitly, so the
+                    # Service mutating webhook is unnecessary. Disabling it also
+                    # removes a cluster-wide `failurePolicy: Fail` webhook on all
+                    # Services that would otherwise block every Service create
+                    # whenever the controller is down (e.g. mid-install).
+                    "enableServiceMutatorWebhook": False,
                     "serviceAccount": {
                         "name": "aws-load-balancer-controller"
                     },

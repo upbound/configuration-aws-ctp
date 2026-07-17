@@ -51,6 +51,7 @@ from .prelude import (
     extract_bucket_name,
     extract_cluster_identity,
     extract_oidc_info,
+    extract_vpc_id,
     get_nodegroup_actual_type,
     is_knative_serving_ready,
     is_license_applied,
@@ -144,6 +145,7 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     # Cluster name/account for EKS Pod Identity (k8gb LB controller), read from
     # the EKS XR's status.eks — independent of backup.
     cluster_name, cluster_account_id, _cluster_region = extract_cluster_identity(observed_resources)
+    vpc_id = extract_vpc_id(observed_resources)
     lb_identity_ready = is_resource_ready(observed_resources, "lb-controller-pia")
     lb_release_deployed = is_release_deployed(observed_resources, "lb-controller-release")
     k8gb_deployed = is_release_deployed(observed_resources, "k8gb-release")
@@ -188,8 +190,8 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     # CoreDNS UDP+TCP:53 NLB.
     if k8gb_enabled:
         add_lbcontroller_resources(rsp, id_val, provider_config, cluster_name,
-                                   cluster_account_id, region, lb_identity_ready,
-                                   lb_release_deployed, config)
+                                   cluster_account_id, region, vpc_id,
+                                   lb_identity_ready, lb_release_deployed, config)
         add_k8gb_resources(rsp, id_val, k8gb, k8gb_geo_tag, k8gb_ext_geo_tags,
                            k8gb_deployed, config)
 

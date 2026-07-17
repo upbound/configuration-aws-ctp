@@ -179,6 +179,18 @@ def extract_bucket_name(location: str) -> str:
     return match.group(1) if match else ""
 
 
+def extract_vpc_id(observed: Dict) -> str:
+    """The VPC ID from the composed Network XR's status.vpcId. Passed to the
+    AWS Load Balancer Controller so it skips IMDS-based VPC discovery, which
+    fails with a 401 for pods under EKS IMDSv2 hop limits and crashloops the
+    controller."""
+    obs = observed.get("network")
+    if not obs:
+        return ""
+    res = obs.resource if hasattr(obs, "resource") else obs
+    return res.get("status", {}).get("vpcId", "")
+
+
 def derive_k8gb_geo_tag(k8gb_param: Optional[Dict], region: str,
                         id_val: str) -> str:
     """The k8gb clusterGeoTag, unique per control plane. Defaults to
