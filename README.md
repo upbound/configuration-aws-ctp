@@ -8,8 +8,8 @@ It exposes a single composite resource, `ControlPlane`
 (`aws.platform.upbound.io/v1alpha1`), implemented with a Python composition function
 (`functions/ctp`). One `ControlPlane` composes the full stack: VPC/networking, an EKS cluster
 and managed node group, IRSA roles, a UXP (Universal Crossplane) installation, and — when
-requested — UXP backup/restore, an enterprise license, Knative scale-to-zero, and provider
-Vertical Pod Autoscaling.
+requested — UXP backup/restore, an enterprise license, Knative scale-to-zero, provider
+Vertical Pod Autoscaling, k8gb global failover, and ArgoCD. cert-manager is always installed.
 
 ## Installation
 
@@ -74,9 +74,37 @@ spec:
 | `uxp.version` | no | UXP Helm chart version (default `2.2.1-up.1`). |
 | `backup` | no | UXP backup via IRSA — see below. |
 | `license.secretRef` | no | Reference to a Secret holding the UXP enterprise license JSON. |
-| `knative.enabled` | no | Install cert-manager + Knative Serving for scale-to-zero functions. |
+| `knative.enabled` | no | Install Knative Serving for scale-to-zero functions (cert-manager is always installed). |
+| `k8gb` | no | Enable k8gb global failover — see below. |
+| `argocd` | no | Enable ArgoCD (GitOps app-of-apps) — see below. |
 | `providerVerticalPodAutoscaling` | no | Enable VPA for UXP providers (CPU/memory bounds). |
 | `managementPolicies` | no | Crossplane management policies (default `["*"]`). |
+
+> **cert-manager** is installed unconditionally on every control plane (a free
+> dependency of Knative/k8gb/ArgoCD Ingress TLS). **nginx-ingress** is installed
+> only when `k8gb` or `argocd` is enabled, so plain control planes do not pay for
+> an idle cloud load balancer.
+
+### k8gb (global failover)
+
+When `k8gb.enabled: "yes"`, the control plane becomes a **producer** in the fleet
+GSLB architecture ([`docs/gslb-dns-architecture.md`](docs/gslb-dns-architecture.md)):
+it installs the AWS Load Balancer Controller (via EKS Pod Identity), the k8gb
+operator, and CoreDNS exposed through an NLB serving UDP+TCP:53, and surfaces
+`status.controlplane.k8gb.coreDNSEndpoint` + `delegationRecord` for the parent-side
+FleetGslb aggregator. Parameters: `dnsZone` (load-balanced zone), `parentZone`,
+`clusterGeoTag` (defaults to `aws-<region>-<id>`), and `strategy`
+(`failover`/`roundRobin`/`geoip`). See
+[`examples/controlplane/with-k8gb.yaml`](examples/controlplane/with-k8gb.yaml).
+GSLB is not yet functional end-to-end — nothing writes the NS delegation until
+FleetGslb exists.
+
+### ArgoCD
+
+When `argocd.enabled: "yes"`, ArgoCD is installed with a UI Ingress
+(`argocd.hostname`, nginx + a self-signed cert-manager Certificate) and a root
+app-of-apps `Application` pointing at the public git repo `argocd.url`. See
+[`examples/controlplane/with-argocd.yaml`](examples/controlplane/with-argocd.yaml).
 
 ### Backup (IRSA)
 

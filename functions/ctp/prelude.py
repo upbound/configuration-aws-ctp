@@ -91,6 +91,42 @@ def is_release_deployed(observed: Dict, name: str) -> bool:
     return state == "deployed"
 
 
+def is_resource_ready(observed: Dict, name: str) -> bool:
+    """True when the observed composed resource reports Ready=True. Generic
+    condition check used to chain any MR/Object on another's readiness."""
+    obs = observed.get(name)
+    if not obs:
+        return False
+
+    res = obs.resource if hasattr(obs, "resource") else obs
+    for cond in res.get("status", {}).get("conditions", []):
+        if cond.get("type") == "Ready" and cond.get("status") == "True":
+            return True
+    return False
+
+
+def extract_cluster_identity(observed: Dict) -> tuple:
+    """Extract (cluster_name, account_id, region) from the composed EKS XR's
+    status.eks.clusterArn (configuration-aws-eks v2.0.2+). Unlike
+    extract_oidc_info this is not gated on backup — the k8gb add-ons need the
+    cluster name/account for Pod Identity regardless of backup. Returns empty
+    strings until the EKS XR surfaces clusterArn."""
+    obs = observed.get("eks-cluster")
+    if not obs:
+        return "", "", ""
+
+    res = obs.resource if hasattr(obs, "resource") else obs
+    cluster_arn = res.get("status", {}).get("eks", {}).get("clusterArn", "")
+    # arn:aws:eks:<region>:<account>:cluster/<name>
+    parts = cluster_arn.split(":") if cluster_arn else []
+    if len(parts) < 6 or "/" not in parts[5]:
+        return "", "", ""
+    region = parts[3]
+    account_id = parts[4]
+    cluster_name = parts[5].split("/", 1)[1]
+    return cluster_name, account_id, region
+
+
 def is_knative_serving_ready(observed: Dict) -> bool:
     """True when the KnativeServing CR reports Ready=True in its embedded
     manifest status (provider-kubernetes Object)."""
@@ -141,6 +177,68 @@ def extract_bucket_name(location: str) -> str:
         return ""
     match = re.match(r"^arn:aws:s3:::([a-z0-9][a-z0-9.-]*[a-z0-9])$", location)
     return match.group(1) if match else ""
+
+
+def extract_vpc_id(observed: Dict) -> str:
+    """The VPC ID from the composed Network XR's status.vpcId. Passed to the
+    AWS Load Balancer Controller so it skips IMDS-based VPC discovery, which
+    fails with a 401 for pods under EKS IMDSv2 hop limits and crashloops the
+    controller."""
+    obs = observed.get("network")
+    if not obs:
+        return ""
+    res = obs.resource if hasattr(obs, "resource") else obs
+    return res.get("status", {}).get("vpcId", "")
+
+
+def derive_k8gb_geo_tag(k8gb_param: Optional[Dict], region: str,
+                        id_val: str) -> str:
+    """The k8gb clusterGeoTag, unique per control plane. Defaults to
+    aws-<region>-<id> (a bare aws-<region> collides when two CPs share a
+    region); an explicit clusterGeoTag param overrides it."""
+    tag = (k8gb_param or {}).get("clusterGeoTag")
+    return tag if tag else f"aws-{region}-{id_val}"
+
+
+def derive_k8gb_ext_geo_tags(id_val: str, dns_zone: str, my_tag: str,
+                             all_ctps: List[Dict]) -> str:
+    """Comma-separated geo tags of same-cloud peer control planes that have
+    k8gb enabled on the same dnsZone. Cross-cloud peers are injected by the
+    fleet layer (FleetGslb) and are out of scope here; empty is fine for a
+    single-cluster start."""
+    tags = set()
+    for ctp in all_ctps:
+        c_name = ctp.get("metadata", {}).get("name", "")
+        if not c_name or c_name == id_val:
+            continue
+        c_params = ctp.get("spec", {}).get("parameters", {})
+        c_k8gb = c_params.get("k8gb", {}) or {}
+        if c_k8gb.get("enabled") != "yes" or c_k8gb.get("dnsZone") != dns_zone:
+            continue
+        c_tag = derive_k8gb_geo_tag(c_k8gb, c_params.get("region", ""), c_name)
+        if c_tag and c_tag != my_tag:
+            tags.add(c_tag)
+    return ",".join(sorted(tags))
+
+
+def extract_coredns_endpoint(observed: Dict) -> str:
+    """The k8gb CoreDNS LoadBalancer endpoint (hostname or IP) read from the
+    observe-only Object on the child CoreDNS Service. Empty until the NLB is
+    provisioned."""
+    obs = observed.get("k8gb-coredns-observe")
+    if not obs:
+        return ""
+    res = obs.resource if hasattr(obs, "resource") else obs
+    ingress = (res.get("status", {})
+                  .get("atProvider", {})
+                  .get("manifest", {})
+                  .get("status", {})
+                  .get("loadBalancer", {})
+                  .get("ingress", []))
+    if not ingress:
+        return ""
+    first = ingress[0]
+    return first.get("hostname") or first.get("ip") or ""
 
 
 def get_nodegroup_actual_type(observed: Dict) -> str:

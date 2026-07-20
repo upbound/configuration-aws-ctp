@@ -6,10 +6,13 @@ operator-facing conditions (Ready, NodeGroupTypeImmutable, LicenseConflict).
 
 from crossplane.function import resource
 
+from .prelude import extract_coredns_endpoint
+
 
 def update_status(rsp, id_val, params, uxp_version, uxp_deployed, backup,
                  role_arn, bucket_name, observed, nodes, ng_actual_type,
-                 ng_type_mismatch, vpa, knative, license_conflict, config):
+                 ng_type_mismatch, vpa, knative, k8gb, k8gb_geo_tag,
+                 license_conflict, config):
     # rsp.desired.composite.resource is a google.protobuf.Struct — convert
     # so we can read fields out of the partially-built XR.
     xr_dict = resource.struct_to_dict(rsp.desired.composite.resource)
@@ -97,6 +100,24 @@ def update_status(rsp, id_val, params, uxp_version, uxp_deployed, backup,
         status["controlplane"]["knative"] = {
             "enabled": knative.get("enabled", "no")
         }
+
+    if k8gb:
+        k8gb_status = {"enabled": k8gb.get("enabled", "no")}
+        if k8gb.get("enabled") == "yes":
+            endpoint = extract_coredns_endpoint(observed)
+            if endpoint:
+                dns_zone = k8gb.get("dnsZone", "")
+                parent_zone = k8gb.get("parentZone", "")
+                # k8gb NS-delegation convention (v0.15.0): the per-cluster NS is
+                # gslb-ns-<loadBalancedZone dashed>-<geoTag> under the parent
+                # zone; the glue A points it at the CoreDNS endpoint. This is the
+                # contract FleetGslb consumes — keep it aligned with k8gb.
+                ns_name = f"gslb-ns-{dns_zone.replace('.', '-')}-{k8gb_geo_tag}.{parent_zone}"
+                k8gb_status["coreDNSEndpoint"] = endpoint
+                k8gb_status["delegationRecord"] = (
+                    f"{dns_zone}. NS {ns_name}. ; {ns_name}. A {endpoint}"
+                )
+        status["controlplane"]["k8gb"] = k8gb_status
 
     conditions = []
 
