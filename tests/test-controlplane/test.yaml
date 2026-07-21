@@ -1231,7 +1231,7 @@ spec:
         chart:
           name: k8gb
           repository: https://www.k8gb.io
-          version: v0.15.0
+          version: v0.20.0
         namespace: k8gb
         values:
           k8gb:
@@ -1318,7 +1318,7 @@ spec:
         k8gb:
           enabled: "yes"
           coreDNSEndpoint: k8gb-nlb-abc123.elb.us-east-1.amazonaws.com
-          delegationRecord: "gslb.example.com. NS gslb-ns-gslb-example-com-aws-us-east-1-test-cp.example.com. ; gslb-ns-gslb-example-com-aws-us-east-1-test-cp.example.com. A k8gb-nlb-abc123.elb.us-east-1.amazonaws.com"
+          delegationRecord: "gslb.example.com. NS gslb-ns-aws-us-east-1-test-cp-gslb.example.com. ; gslb-ns-aws-us-east-1-test-cp-gslb.example.com. A k8gb-nlb-abc123.elb.us-east-1.amazonaws.com"
 ---
 apiVersion: meta.dev.upbound.io/v1alpha1
 kind: CompositionTest
