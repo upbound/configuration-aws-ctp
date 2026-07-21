@@ -247,7 +247,7 @@ whole point of the design). Resolution:
   `FleetGslb` already holds), obtains the cert once, and pushes the resulting
   `Secret` to every child via the parent's existing provider-kubernetes `Object`
   write path (the same path that already delivers, e.g., the UXP license).
-  Children reference the synced `Secret` on their Ingress. Use a **wildcard**
+  Children reference the synced `Secret` on their Gateway listener. Use a **wildcard**
   `*.<loadBalancedZone>` to cover all global hostnames with one cert where org
   policy allows; otherwise per-host.
 - **Internal-only audiences** may instead use a **private-CA / enterprise-PKI**
@@ -285,9 +285,10 @@ component, so there is no licensing consideration.
   removed. Optional add-ons (knative, k8gb, ArgoCD) stay behind their own flags.
 - **Installs the globally-balanced apps as add-ons** - ArgoCD first (gated, like
   the existing knative add-on), and later the UXP/console or an HTTP-API app -
-  each exposed via an Ingress carrying the global hostname with the
-  parent-issued cert (§8). Those Ingresses are what resilient-ctp's `Gslb`
-  references.
+  each exposed via an HTTPRoute (Gateway API) carrying the global hostname with
+  the parent-issued cert (§8). Those HTTPRoutes are what resilient-ctp's `Gslb`
+  references (k8gb v0.17.0+ `resourceRef → HTTPRoute`). Note: resilient-ctp does
+  not yet create the `Gslb`; this is the target contract (see §9 below).
 - The add-on composition logic is cloud-agnostic; the **cloud-specific work is
   the CoreDNS LoadBalancer** (static IP + protocol handling above), which lands
   in the existing per-cloud network/identity modules, not the shared add-on

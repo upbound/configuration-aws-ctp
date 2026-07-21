@@ -1,8 +1,8 @@
 # E2E test: ControlPlane with the k8gb + ArgoCD add-ons enabled.
 # Spins up a real EKS cluster via the configuration-aws-ctp composition, installs
-# UXP, and then the full add-on stack: cert-manager (always-on), nginx-ingress,
+# UXP, and then the full add-on stack: cert-manager (always-on), the Envoy Gateway data plane,
 # the AWS Load Balancer Controller (EKS Pod Identity), k8gb (operator + CoreDNS
-# exposed via an NLB), and ArgoCD (UI Ingress + root app-of-apps).
+# exposed via an NLB), and ArgoCD (UI Gateway/HTTPRoute + root app-of-apps).
 #
 # Credentials: the AWS ProviderConfig "default" uses Upbound-injected identity
 # federated to the solutions e2e AWS role, so no pre-provisioned Secret is

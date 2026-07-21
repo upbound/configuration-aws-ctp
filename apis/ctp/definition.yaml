@@ -229,7 +229,7 @@ spec:
                     description: >-
                       Enable k8gb (Kubernetes Global Balancer) for health-aware, DNS-based global
                       failover. Installs the AWS Load Balancer Controller, the k8gb operator, and
-                      CoreDNS exposed via an NLB, and pulls in nginx-ingress. See docs/gslb-dns-architecture.md.
+                      CoreDNS exposed via an NLB, and provisions an Envoy Gateway data plane. See docs/gslb-dns-architecture.md.
                     properties:
                       enabled:
                         type: string
@@ -258,7 +258,7 @@ spec:
                   argocd:
                     type: object
                     description: >-
-                      Enable ArgoCD (GitOps app-of-apps) with a UI Ingress. Pulls in nginx-ingress.
+                      Enable ArgoCD (GitOps app-of-apps) with a UI exposed via Envoy Gateway (Gateway API).
                     properties:
                       enabled:
                         type: string
@@ -267,7 +267,7 @@ spec:
                         enum: ["yes", "no"]
                       hostname:
                         type: string
-                        description: Hostname for the ArgoCD UI Ingress (e.g. argocd.example.com).
+                        description: Hostname for the ArgoCD UI (e.g. argocd.example.com).
                       url:
                         type: string
                         description: Public git repository URL for the root app-of-apps Application.

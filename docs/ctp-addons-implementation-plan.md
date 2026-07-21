@@ -1,7 +1,11 @@
 # ctp add-ons implementation plan (aws-ctp)
 
 - **Date:** 2026-07-16
-- **Status:** Ready for implementation.
+- **Status:** Ready for implementation. **Step 2 (nginx-ingress) is superseded**
+  by [`docs/superpowers/specs/2026-07-21-gateway-api-migration-design.md`](superpowers/specs/2026-07-21-gateway-api-migration-design.md) -
+  the community `ingress-nginx` was retired 2026-03-24 and replaced with Envoy
+  Gateway (Kubernetes Gateway API), gated `k8gb OR argocd` instead of always-on.
+  k8gb is now pinned to v0.20.0 (was v0.15.0 when this plan was written).
 - **Scope:** `configuration-aws-ctp` only (azure/gcp ported later). One PR, one
   commit per step, composition tests per step, a single installation e2e at the
   end.
@@ -104,7 +108,11 @@ Extend the `ControlPlane` composition so a child cluster gets:
 - Tests: cert-manager `Release` now asserted in the **baseline** case (no knative).
 - Verify: `up project build` + `up test run tests/*`.
 
-## Step 2 - nginx-ingress (always-on, new)
+## Step 2 - nginx-ingress (always-on, new) [SUPERSEDED]
+
+> nginx-ingress was retired 2026-03-24 and replaced by Envoy Gateway (Gateway
+> API), gated `k8gb OR argocd` rather than always-on - see
+> [`docs/superpowers/specs/2026-07-21-gateway-api-migration-design.md`](superpowers/specs/2026-07-21-gateway-api-migration-design.md).
 
 - Create `functions/ctp/ingress.py` with `add_ingress_resources(rsp, id_val, config)`:
   an `ingress-nginx` `Release` (repo `https://kubernetes.github.io/ingress-nginx`,

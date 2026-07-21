@@ -81,9 +81,10 @@ spec:
 | `managementPolicies` | no | Crossplane management policies (default `["*"]`). |
 
 > **cert-manager** is installed unconditionally on every control plane (a free
-> dependency of Knative/k8gb/ArgoCD Ingress TLS). **nginx-ingress** is installed
-> only when `k8gb` or `argocd` is enabled, so plain control planes do not pay for
-> an idle cloud load balancer.
+> dependency of Knative/k8gb/ArgoCD Gateway TLS). **Envoy Gateway (Gateway API)**
+> is installed only when `k8gb` or `argocd` is enabled, so plain control planes
+> do not pay for an idle cloud load balancer. The community `ingress-nginx` this
+> replaced was retired 2026-03-24.
 
 ### k8gb (global failover)
 
@@ -101,9 +102,10 @@ FleetGslb exists.
 
 ### ArgoCD
 
-When `argocd.enabled: "yes"`, ArgoCD is installed with a UI Ingress
-(`argocd.hostname`, nginx + a self-signed cert-manager Certificate) and a root
-app-of-apps `Application` pointing at the public git repo `argocd.url`. See
+When `argocd.enabled: "yes"`, ArgoCD is installed with a UI exposed via Envoy
+Gateway (`argocd.hostname`, a Gateway + HTTPRoute and a self-signed cert-manager
+Certificate) and a root app-of-apps `Application` pointing at the public git
+repo `argocd.url`. See
 [`examples/controlplane/with-argocd.yaml`](examples/controlplane/with-argocd.yaml).
 
 ### Backup (IRSA)
