@@ -1,38 +1,55 @@
-# E2E test: ControlPlane with IRSA-based S3 backup.
-# Spins up a real EKS cluster via the configuration-aws-ctp composition,
-# installs UXP, and wires IRSA backup.
+# Single comprehensive E2E test for configuration-aws-ctp.
+#
+# Spins up a real EKS cluster via the composition and exercises the full stack in
+# one run: UXP + IRSA-based S3 backup + the k8gb producer (operator + CoreDNS via a
+# UDP+TCP NLB) + ArgoCD (UI Gateway/HTTPRoute + app-of-apps), which also pulls in
+# cert-manager (always-on), the Envoy Gateway data plane, and the AWS Load Balancer
+# Controller (EKS Pod Identity).
+#
+# WHY ONE TEST: consolidated from the former e2etest-controlplane (backup only) and
+# e2etest-addons (k8gb + argocd) so a single ephemeral cluster covers the whole
+# stack - one e2e run instead of two, cutting wall-clock and cost. Mirrors
+# configuration-azure-ctp's single `controlplane` e2e.
 #
 # Credentials: the AWS ProviderConfig "default" uses Upbound-injected identity
-# (source: Upbound) federated to the solutions e2e AWS role, so no
+# (source: Upbound) federated to the solutions e2e AWS role
+# (arn:aws:iam::609897127049:role/solutions-e2e-provider-aws), so no
 # pre-provisioned Secret is required on the ephemeral test control plane.
+# NOTE ON NAMING: the OIDC subject `up test` presents embeds this test's name
+# (mcp:<org>/configuration-aws-ctp-uptest-<name>:provider:provider-aws); the role
+# trust must allow it. This test is named `controlplane` to match the canonical
+# cross-cloud convention (as in configuration-azure-ctp). If e2e auth fails after
+# this consolidation, register the `...-uptest-controlplane` subject on the role
+# (or confirm its trust uses a wildcard).
 #
-# Backup is enabled but NO license is supplied, and that is sufficient here:
-# this test asserts only that the composition wires backup up and the
-# ControlPlane XR reaches Ready. The S3 Bucket, BackupConfig/BackupSchedule and
-# RBAC are provider-kubernetes Objects that go Ready once their manifests apply
-# (UXP installs the admin.uxp.upbound.io CRDs regardless of licensing) — verified
-# green with no license.
+# What this asserts: the ControlPlane XR reaches Ready=True. Because
+# function-auto-ready aggregates every composed resource, Ready=True implies UXP,
+# the backup chain + IRSA, and every add-on Release/Object came up cleanly. The
+# k8gb CoreDNS endpoint is surfaced on status.controlplane.k8gb.coreDNSEndpoint
+# (verify it is non-empty manually - E2ETest cannot assert arbitrary status fields).
 #
-# NOTE: actually EXECUTING a backup requires a UXP Standard-plan (or above)
-# license — https://docs.upbound.io/manuals/uxp/howtos/backup-and-restore/. This
-# test does not trigger or assert a real backup run, so it does not need one. To
-# cover an end-to-end backup, add a valid "uxp-license" Secret + `license` block
-# and assert on an actual backup.
+# No license is supplied - the backup wiring and the add-ons need none. Executing a
+# real backup run would need a UXP Standard-plan (or above) license; this test only
+# asserts the backup chain is wired and Ready, so it needs none.
 #
-# Requires sufficient AWS quotas for one t3.small two-node EKS cluster.
-# Expected runtime: 25-45 minutes (EKS provisioning + UXP install + IRSA wiring).
+# Scope: installation only. It does NOT test DNS failover - nothing writes the NS
+# delegation yet (FleetGslb is a separate workstream), so GSLB is not functional
+# end-to-end after this test.
+#
+# Requires AWS quota for one three-node t3.medium EKS cluster plus the NLB/ELB the
+# add-ons provision. Expected runtime: 40-70 minutes.
 apiVersion: meta.dev.upbound.io/v1alpha1
 kind: E2ETest
 metadata:
-  name: controlplane-with-backup
+  name: controlplane
 spec:
   crossplane:
     autoUpgrade:
       channel: Stable
   defaultConditions:
   - Ready
-  timeoutSeconds: 3600
-  cleanupTimeoutSeconds: 1200
+  timeoutSeconds: 5400
+  cleanupTimeoutSeconds: 1800
   extraResources:
   - apiVersion: aws.m.upbound.io/v1beta1
     kind: ProviderConfig
@@ -56,9 +73,18 @@ spec:
         region: us-east-1
         version: "1.34"
         nodes:
-          count: 2
-          instanceType: t3.small
+          count: 3
+          instanceType: t3.medium
         backup:
           enabled: "yes"
           location: arn:aws:s3:::upbound-e2e-test-cp-backup
+        k8gb:
+          enabled: "yes"
+          dnsZone: gslb.example.com
+          parentZone: example.com
+          strategy: failover
+        argocd:
+          enabled: "yes"
+          hostname: argocd.example.com
+          url: https://github.com/argoproj/argocd-example-apps
   skipDelete: false
