@@ -1,8 +1,9 @@
 # ControlPlane with the k8gb add-on enabled. Installs the AWS Load Balancer
 # Controller (EKS Pod Identity), the k8gb operator, and CoreDNS exposed via an
-# NLB serving UDP+TCP:53, and pulls in nginx-ingress + cert-manager. The XR
-# surfaces status.controlplane.k8gb.coreDNSEndpoint + delegationRecord for the
-# fleet aggregator (FleetGslb) to consume. See docs/gslb-dns-architecture.md.
+# NLB serving UDP+TCP:53, and provisions an Envoy Gateway data plane +
+# cert-manager. The XR surfaces status.controlplane.k8gb.coreDNSEndpoint +
+# delegationRecord for the fleet aggregator (FleetGslb) to consume. See
+# docs/gslb-dns-architecture.md.
 apiVersion: aws.platform.upbound.io/v1alpha1
 kind: ControlPlane
 metadata:

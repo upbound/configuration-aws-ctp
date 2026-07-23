@@ -1,8 +1,9 @@
 """03b-lbcontroller — AWS Load Balancer Controller via EKS Pod Identity.
 
-Installed when k8gb is enabled: k8gb's CoreDNS Service needs an NLB serving
-UDP+TCP:53, which reliably requires this controller (the in-tree path defaults
-to a Classic ELB that cannot do UDP / mixed-protocol).
+Installed when k8gb or argocd is enabled - the shared NLB prerequisite for the
+CoreDNS LB and/or the Envoy Gateway data-plane LB: k8gb's CoreDNS Service needs
+an NLB serving UDP+TCP:53, which reliably requires this controller (the
+in-tree path defaults to a Classic ELB that cannot do UDP / mixed-protocol).
 
 Identity uses EKS Pod Identity (not IRSA): an IAM Role trusted by
 pods.eks.amazonaws.com, attached to the published AWS Load Balancer Controller

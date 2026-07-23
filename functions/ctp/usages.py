@@ -123,13 +123,30 @@ def add_usage_resources(rsp, id_val, config, k8gb_enabled=False,
     resource.update(rsp.desired.resources["usage-release-eks"], usage_release_eks)
     resource.update(rsp.desired.resources["usage-eks-network"], usage_eks_network)
 
-    if k8gb_enabled:
+    gateway_enabled = k8gb_enabled or argocd_enabled
+
+    if gateway_enabled:
         _emit_eks_usage(
             rsp, id_val, "usage-lbcontroller-eks",
             "helm.m.crossplane.io/v1beta1", "Release",
             f"{id_val}-lb-controller",
             "AWS Load Balancer Controller Release must finish uninstalling before the EKS cluster is deleted",
             config)
+        _emit_eks_usage(
+            rsp, id_val, "usage-envoy-gateway-eks",
+            "helm.m.crossplane.io/v1beta1", "Release",
+            f"{id_val}-envoy-gateway",
+            "Envoy Gateway Release must finish uninstalling before the EKS cluster is deleted",
+            config)
+        for cr_name in ("envoy-proxy-config", "gateway-class"):
+            _emit_eks_usage(
+                rsp, id_val, f"usage-{cr_name}-eks",
+                "kubernetes.m.crossplane.io/v1alpha1", "Object",
+                f"{id_val}-{cr_name}",
+                f"Envoy Gateway {cr_name} Object must be removed before the EKS cluster is deleted",
+                config)
+
+    if k8gb_enabled:
         _emit_eks_usage(
             rsp, id_val, "usage-k8gb-eks",
             "helm.m.crossplane.io/v1beta1", "Release",
@@ -153,8 +170,8 @@ def add_usage_resources(rsp, id_val, config, k8gb_enabled=False,
             "ArgoCD Release must finish uninstalling before the EKS cluster is deleted",
             config)
         # Every child-cluster ArgoCD Object also guards the EKS cluster.
-        for cr_name in ("argocd-issuer", "argocd-cert", "argocd-ingress",
-                        "argocd-app"):
+        for cr_name in ("argocd-issuer", "argocd-cert", "argocd-gateway",
+                        "argocd-httproute", "argocd-app"):
             _emit_eks_usage(
                 rsp, id_val, f"usage-{cr_name}-eks",
                 "kubernetes.m.crossplane.io/v1alpha1", "Object",
