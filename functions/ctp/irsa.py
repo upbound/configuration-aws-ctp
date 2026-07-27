@@ -20,7 +20,7 @@ def add_irsa_resources(rsp, id_val, bucket_region, provider_config, oidc_host,
         "kind": "OpenIDConnectProvider",
         "metadata": {
             "name": f"{id_val}-oidc",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "oidc-provider"
             }
@@ -63,7 +63,7 @@ def add_irsa_resources(rsp, id_val, bucket_region, provider_config, oidc_host,
         "kind": "Role",
         "metadata": {
             "name": f"{id_val}-backup-irsa",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "backup-irsa-role"
             }
@@ -105,7 +105,7 @@ def add_irsa_resources(rsp, id_val, bucket_region, provider_config, oidc_host,
         "kind": "Policy",
         "metadata": {
             "name": f"{id_val}-backup-s3",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "backup-s3-policy"
             }
@@ -128,7 +128,7 @@ def add_irsa_resources(rsp, id_val, bucket_region, provider_config, oidc_host,
         "kind": "RolePolicyAttachment",
         "metadata": {
             "name": f"{id_val}-backup-attach",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "backup-policy-attachment"
             }
@@ -159,7 +159,7 @@ def add_irsa_resources(rsp, id_val, bucket_region, provider_config, oidc_host,
         "kind": "Object",
         "metadata": {
             "name": f"{id_val}-backup-sa",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "backup-sa"
             }
@@ -196,7 +196,7 @@ def add_irsa_resources(rsp, id_val, bucket_region, provider_config, oidc_host,
         "kind": "Object",
         "metadata": {
             "name": f"{id_val}-controller-restart",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "controller-restart"
             }
@@ -234,7 +234,7 @@ def add_irsa_resources(rsp, id_val, bucket_region, provider_config, oidc_host,
                 "kind": "Object",
                 "metadata": {
                     "name": f"{id_val}-backup-restore",
-                    "namespace": "default",
+                    "namespace": config["namespace"],
                     "annotations": {
                         "crossplane.io/composition-resource-name": "backup-restore"
                     }

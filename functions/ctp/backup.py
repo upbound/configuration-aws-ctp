@@ -22,7 +22,7 @@ def add_backup_resources(rsp, id_val, bucket_region, provider_config,
         "kind": "Bucket",
         "metadata": {
             "name": f"{id_val}-backup-bucket",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "backup-bucket",
                 "crossplane.io/external-name": bucket_name
@@ -51,7 +51,7 @@ def add_backup_resources(rsp, id_val, bucket_region, provider_config,
         "kind": "Object",
         "metadata": {
             "name": f"{id_val}-backup-config",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "backup-config"
             }
@@ -98,7 +98,7 @@ def add_backup_resources(rsp, id_val, bucket_region, provider_config,
         "kind": "Object",
         "metadata": {
             "name": f"{id_val}-backup-rbac",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "backup-rbac"
             }
@@ -134,7 +134,7 @@ def add_backup_resources(rsp, id_val, bucket_region, provider_config,
         "kind": "Object",
         "metadata": {
             "name": f"{id_val}-backup-rbac-binding",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "backup-rbac-binding"
             }
@@ -176,7 +176,7 @@ def add_backup_resources(rsp, id_val, bucket_region, provider_config,
             "kind": "Object",
             "metadata": {
                 "name": f"{id_val}-backup-schedule",
-                "namespace": "default",
+                "namespace": config["namespace"],
                 "annotations": {
                     "crossplane.io/composition-resource-name": "backup-schedule"
                 }

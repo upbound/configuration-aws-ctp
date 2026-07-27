@@ -19,13 +19,13 @@ from crossplane.function import resource
 from .prelude import stamp
 
 
-def _child_object(id_val, cr_name, manifest):
+def _child_object(id_val, cr_name, manifest, config):
     return {
         "apiVersion": "kubernetes.m.crossplane.io/v1alpha1",
         "kind": "Object",
         "metadata": {
             "name": f"{id_val}-{cr_name}",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": cr_name
             }
@@ -55,7 +55,7 @@ def add_argocd_resources(rsp, id_val, argocd_param, argocd_deployed,
         "kind": "Release",
         "metadata": {
             "name": f"{id_val}-argocd",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": release_annotations
         },
         "spec": {
@@ -113,7 +113,7 @@ def add_argocd_resources(rsp, id_val, argocd_param, argocd_deployed,
                     }
                 ]
             }
-        })
+        }, config)
         stamp(gateway, config)
         resource.update(rsp.desired.resources["argocd-gateway"], gateway)
 
@@ -131,7 +131,7 @@ def add_argocd_resources(rsp, id_val, argocd_param, argocd_deployed,
                     {"backendRefs": [{"name": "argocd-server", "port": 80}]}
                 ]
             }
-        })
+        }, config)
         stamp(httproute, config)
         resource.update(rsp.desired.resources["argocd-httproute"], httproute)
 
@@ -144,7 +144,7 @@ def add_argocd_resources(rsp, id_val, argocd_param, argocd_deployed,
             "kind": "ClusterIssuer",
             "metadata": {"name": "argocd-selfsigned"},
             "spec": {"selfSigned": {}}
-        })
+        }, config)
         stamp(issuer, config)
         resource.update(rsp.desired.resources["argocd-issuer"], issuer)
 
@@ -160,7 +160,7 @@ def add_argocd_resources(rsp, id_val, argocd_param, argocd_deployed,
                     "kind": "ClusterIssuer"
                 }
             }
-        })
+        }, config)
         stamp(certificate, config)
         resource.update(rsp.desired.resources["argocd-cert"], certificate)
 
@@ -185,6 +185,6 @@ def add_argocd_resources(rsp, id_val, argocd_param, argocd_deployed,
                     "automated": {"prune": True, "selfHeal": True}
                 }
             }
-        })
+        }, config)
         stamp(application, config)
         resource.update(rsp.desired.resources["argocd-app"], application)

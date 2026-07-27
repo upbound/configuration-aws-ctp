@@ -30,7 +30,7 @@ def add_network_resource(rsp, id_val, region, provider_config, mgmt_policies,
         "kind": "Network",
         "metadata": {
             "name": id_val,
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "network"
             }

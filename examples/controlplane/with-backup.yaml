@@ -10,6 +10,7 @@ apiVersion: aws.platform.upbound.io/v1alpha1
 kind: ControlPlane
 metadata:
   name: prod-control-plane
+  namespace: platform
 spec:
   parameters:
     id: prod-control-plane

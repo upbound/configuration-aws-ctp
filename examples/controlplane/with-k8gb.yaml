@@ -8,6 +8,7 @@ apiVersion: aws.platform.upbound.io/v1alpha1
 kind: ControlPlane
 metadata:
   name: k8gb-control-plane
+  namespace: platform
 spec:
   parameters:
     id: k8gb-control-plane

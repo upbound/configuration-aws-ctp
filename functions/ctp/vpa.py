@@ -11,7 +11,7 @@ def add_vpa_resources(rsp, id_val, vpa, vpa_ready, config):
         "kind": "Release",
         "metadata": {
             "name": f"{id_val}-vpa",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "vpa-release"
             }
@@ -42,7 +42,7 @@ def add_vpa_resources(rsp, id_val, vpa, vpa_ready, config):
         "kind": "Release",
         "metadata": {
             "name": f"{id_val}-metrics-server",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "metrics-server-release"
             }

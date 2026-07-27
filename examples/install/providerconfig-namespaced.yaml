@@ -1,0 +1,19 @@
+# Namespaced (Crossplane v2) ProviderConfig required by the v2 managed
+# resources (*.aws.m.upbound.io) that this composition produces.
+# This ProviderConfig must live in the SAME namespace as the ControlPlane XR
+# (here "platform", see examples/install/namespace.yaml): a namespaced
+# ProviderConfig reads its credentials from its own namespace, and the composed
+# managed resources resolve the ProviderConfig by name within their own
+# namespace. The composition's providerConfigName defaults to "default" - change
+# metadata.name here only if you also override providerConfigName on the XR.
+apiVersion: aws.m.upbound.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: default
+  namespace: platform
+spec:
+  credentials:
+    source: Upbound
+    upbound:
+      webIdentity:
+        roleARN: arn:aws:iam::656321468224:role/ai-playground

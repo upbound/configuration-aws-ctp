@@ -270,7 +270,7 @@ def add_lbcontroller_resources(rsp, id_val, provider_config, cluster_name,
         "kind": "Role",
         "metadata": {
             "name": role_name,
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "lb-controller-role"
             }
@@ -293,7 +293,7 @@ def add_lbcontroller_resources(rsp, id_val, provider_config, cluster_name,
         "kind": "Policy",
         "metadata": {
             "name": f"{id_val}-lb-controller",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "lb-controller-policy"
             }
@@ -316,7 +316,7 @@ def add_lbcontroller_resources(rsp, id_val, provider_config, cluster_name,
         "kind": "RolePolicyAttachment",
         "metadata": {
             "name": f"{id_val}-lb-controller-attach",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "lb-controller-attach"
             }
@@ -352,7 +352,7 @@ def add_lbcontroller_resources(rsp, id_val, provider_config, cluster_name,
         "kind": "PodIdentityAssociation",
         "metadata": {
             "name": f"{id_val}-lb-controller-pia",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": "lb-controller-pia"
             }
@@ -385,7 +385,7 @@ def add_lbcontroller_resources(rsp, id_val, provider_config, cluster_name,
         "kind": "Release",
         "metadata": {
             "name": f"{id_val}-lb-controller",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": release_annotations
         },
         "spec": {

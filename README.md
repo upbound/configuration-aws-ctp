@@ -33,9 +33,31 @@ spec:
 This configuration depends on `configuration-aws-eks`, `function-extra-resources`,
 `function-auto-ready`, and `provider-aws-s3` (see [`upbound.yaml`](upbound.yaml)).
 
-Because the composed managed resources are namespaced Crossplane v2 MRs
-(`*.aws.m.upbound.io`), a namespaced `ProviderConfig` must exist in the namespace where the
-MRs live — see [`examples/controlplane/providerconfig-namespaced.yaml`](examples/controlplane/providerconfig-namespaced.yaml).
+### The ControlPlane is namespaced
+
+The `ControlPlane` XR is **namespaced** (`scope: Namespaced`). Every resource it
+manages - the credentials Secret, the AWS `ProviderConfig`, the composed managed
+resources (`*.aws.m.upbound.io`), and the connection secrets the composition
+writes (the EKS cluster-admin kubeconfig and the XR connection secret) - lives in
+the XR's namespace. Choose an operator-managed, RBAC-restricted namespace to keep
+cluster-admin kubeconfigs and cloud credentials out of `default`, and create it
+first (Crossplane does not create it):
+
+```bash
+kubectl apply -f examples/install/namespace.yaml   # namespace: platform
+```
+
+Applying a `ControlPlane` with no namespace falls back to `default`. Resources
+installed on the inner EKS cluster (UXP in `crossplane-system`, cert-manager,
+add-ons, etc.) keep their own fixed namespaces regardless of the XR's namespace.
+
+The providers authenticate with a namespaced AWS `ProviderConfig` that must live
+in the **same namespace as the ControlPlane XR** (a namespaced ProviderConfig
+reads its credentials from its own namespace, and the composed managed resources
+resolve the ProviderConfig by name within their own namespace). See
+[`examples/install/providerconfig-namespaced.yaml`](examples/install/providerconfig-namespaced.yaml).
+Apply the namespace, then the ProviderConfig into that same namespace, then apply
+`ControlPlane` XRs into it.
 
 ## Usage
 
@@ -46,6 +68,7 @@ apiVersion: aws.platform.upbound.io/v1alpha1
 kind: ControlPlane
 metadata:
   name: my-control-plane
+  namespace: platform
 spec:
   parameters:
     id: my-control-plane
@@ -137,7 +160,10 @@ up project build
 up test run tests/*
 ```
 
-End-to-end tests provision real AWS resources and require Upbound credentials:
+End-to-end tests provision real AWS resources and require Upbound credentials.
+They also require a working AWS `ProviderConfig` named `default`, namespaced in
+the same namespace as the `ControlPlane` under test (the e2e uses `platform`),
+with permissions to create VPCs, EKS clusters, IAM roles, and S3 buckets:
 
 ```bash
 up test run tests/* --e2e
