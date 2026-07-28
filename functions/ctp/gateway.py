@@ -21,13 +21,13 @@ from crossplane.function import resource
 from .prelude import stamp
 
 
-def _child_object(id_val, cr_name, manifest):
+def _child_object(id_val, cr_name, manifest, config):
     return {
         "apiVersion": "kubernetes.m.crossplane.io/v1alpha1",
         "kind": "Object",
         "metadata": {
             "name": f"{id_val}-{cr_name}",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": {
                 "crossplane.io/composition-resource-name": cr_name
             }
@@ -52,7 +52,7 @@ def add_gateway_resources(rsp, id_val, gateway_ready, config):
         "kind": "Release",
         "metadata": {
             "name": f"{id_val}-envoy-gateway",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": annotations
         },
         "spec": {
@@ -105,7 +105,7 @@ def add_gateway_resources(rsp, id_val, gateway_ready, config):
                 }
             }
         }
-    })
+    }, config)
     stamp(envoy_proxy, config)
     resource.update(rsp.desired.resources["envoy-proxy-config"], envoy_proxy)
 
@@ -122,6 +122,6 @@ def add_gateway_resources(rsp, id_val, gateway_ready, config):
                 "namespace": "envoy-gateway-system"
             }
         }
-    })
+    }, config)
     stamp(gateway_class, config)
     resource.update(rsp.desired.resources["gateway-class"], gateway_class)

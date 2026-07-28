@@ -1525,3 +1525,378 @@ spec:
             - backendRefs:
               - name: argocd-server
                 port: 80
+---
+# --- scope: Namespaced propagation tests ---
+# Every composed resource co-locates in the XR's namespace; child-cluster
+# namespaces (crossplane-system, cert-manager, kube-system, k8gb, argocd,
+# envoy-gateway-system), the ArgoCD app destination, and the license source
+# Secret namespace stay fixed.
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: namespaced-core
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+      namespace: platform
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+  assertResources:
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: Network
+    metadata:
+      name: test-cp
+      namespace: platform
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: EKS
+    metadata:
+      name: test-cp
+      namespace: platform
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-uxp
+      namespace: platform
+    spec:
+      forProvider:
+        namespace: crossplane-system
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-certmanager
+      namespace: platform
+    spec:
+      forProvider:
+        namespace: cert-manager
+  - apiVersion: protection.crossplane.io/v1beta1
+    kind: Usage
+    metadata:
+      name: test-cp-usage-eks-network
+      namespace: platform
+    spec:
+      of:
+        kind: Network
+        resourceRef:
+          name: test-cp
+          namespace: platform
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: default-namespace-fallback
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+      namespace: default
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+  assertResources:
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: EKS
+    metadata:
+      name: test-cp
+      namespace: default
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: namespaced-backup
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+      namespace: platform
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        backup:
+          enabled: "yes"
+          location: arn:aws:s3:::my-backup-bucket
+  observedResources:
+  # EKS status.eks (OIDC issuer/ARN) + UXP deployed gate the IRSA chain.
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: EKS
+    metadata:
+      name: test-cp
+      namespace: platform
+      annotations:
+        crossplane.io/composition-resource-name: eks-cluster
+    status:
+      eks:
+        clusterArn: arn:aws:eks:us-east-1:123456789012:cluster/test-cp-abc12345
+        oidcIssuerUrl: https://oidc.eks.us-east-1.amazonaws.com/id/ABC123XYZ
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-uxp
+      namespace: platform
+      annotations:
+        crossplane.io/composition-resource-name: uxp-release
+    status:
+      atProvider:
+        state: deployed
+  assertResources:
+  - apiVersion: s3.aws.m.upbound.io/v1beta1
+    kind: Bucket
+    metadata:
+      name: test-cp-backup-bucket
+      namespace: platform
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-backup-config
+      namespace: platform
+  - apiVersion: iam.aws.m.upbound.io/v1beta1
+    kind: OpenIDConnectProvider
+    metadata:
+      name: test-cp-oidc
+      namespace: platform
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-backup-sa
+      namespace: platform
+    spec:
+      forProvider:
+        manifest:
+          metadata:
+            namespace: crossplane-system
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: namespaced-k8gb
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+      namespace: platform
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        k8gb:
+          enabled: "yes"
+          dnsZone: gslb.example.com
+          parentZone: example.com
+  assertResources:
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-k8gb
+      namespace: platform
+    spec:
+      forProvider:
+        namespace: k8gb
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-k8gb-coredns
+      namespace: platform
+    spec:
+      forProvider:
+        manifest:
+          metadata:
+            namespace: k8gb
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-envoy-gateway
+      namespace: platform
+    spec:
+      forProvider:
+        namespace: envoy-gateway-system
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: namespaced-argocd
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+      namespace: platform
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        argocd:
+          enabled: "yes"
+          hostname: argocd.example.com
+          url: https://github.com/example/apps
+  observedResources:
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-certmanager
+      namespace: platform
+      annotations:
+        crossplane.io/composition-resource-name: certmanager-release
+    status:
+      atProvider:
+        state: deployed
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-argocd
+      namespace: platform
+      annotations:
+        crossplane.io/composition-resource-name: argocd-release
+    status:
+      atProvider:
+        state: deployed
+  assertResources:
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-argocd
+      namespace: platform
+    spec:
+      forProvider:
+        namespace: argocd
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-argocd-app
+      namespace: platform
+    spec:
+      forProvider:
+        manifest:
+          kind: Application
+          spec:
+            destination:
+              namespace: default
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: namespaced-vpa
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+      namespace: platform
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        providerVerticalPodAutoscaling:
+          enabled: "yes"
+  assertResources:
+  - apiVersion: helm.m.crossplane.io/v1beta1
+    kind: Release
+    metadata:
+      name: test-cp-vpa
+      namespace: platform
+    spec:
+      forProvider:
+        namespace: kube-system
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: namespaced-license
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+      namespace: platform
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        license:
+          secretRef:
+            name: uxp-license
+            namespace: default
+  assertResources:
+  - apiVersion: kubernetes.m.crossplane.io/v1alpha1
+    kind: Object
+    metadata:
+      name: test-cp-uxp-license-secret
+      namespace: platform
+    spec:
+      forProvider:
+        manifest:
+          metadata:
+            namespace: crossplane-system
+      references:
+      - patchesFrom:
+          namespace: default

@@ -1,0 +1,11 @@
+# The namespace that holds a ControlPlane and all of its resources: the
+# credentials Secret, the AWS ProviderConfig, the composed managed resources,
+# and the connection secrets the composition writes (the EKS cluster-admin
+# kubeconfig and the XR connection secret).
+# Crossplane does not create this namespace - apply it before the ControlPlane.
+# Use an RBAC-restricted namespace to keep cluster-admin kubeconfigs and cloud
+# credentials out of "default".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform

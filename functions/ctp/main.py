@@ -82,6 +82,11 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     xr = resource.struct_to_dict(req.observed.composite.resource)
     params = xr.get("spec", {}).get("parameters", {})
 
+    # The XR is namespaced (apis/ctp/definition.yaml scope: Namespaced); every
+    # composed resource and the sub-XRs' connection secrets co-locate in the XR's
+    # own namespace. Falls back to "default" when unset.
+    config["namespace"] = xr.get("metadata", {}).get("namespace") or "default"
+
     id_val = params.get("id", "")
     region = params.get("region", "")
     provider_config = params.get("providerConfigName", "default")

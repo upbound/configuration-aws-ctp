@@ -29,7 +29,7 @@ def add_knative_resources(rsp, id_val, knative_op_ready,
         "kind": "Release",
         "metadata": {
             "name": f"{id_val}-knative-operator",
-            "namespace": "default",
+            "namespace": config["namespace"],
             "annotations": operator_annotations
         },
         "spec": {
@@ -79,7 +79,7 @@ def add_knative_resources(rsp, id_val, knative_op_ready,
             "kind": "Object",
             "metadata": {
                 "name": f"{id_val}-knative-serving-ns",
-                "namespace": "default",
+                "namespace": config["namespace"],
                 "annotations": {
                     "crossplane.io/composition-resource-name": "knative-serving-ns"
                 }
@@ -108,7 +108,7 @@ def add_knative_resources(rsp, id_val, knative_op_ready,
             "kind": "Object",
             "metadata": {
                 "name": f"{id_val}-knative-serving-cr",
-                "namespace": "default",
+                "namespace": config["namespace"],
                 "annotations": {
                     "crossplane.io/composition-resource-name": "knative-serving-cr"
                 }
