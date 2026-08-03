@@ -61,7 +61,7 @@ spec:
                   network:
                     type: object
                     description: >-
-                      VPC network topology for the control plane. Optional — defaults to a
+                      VPC network topology for the control plane. Optional - defaults to a
                       resilient three-AZ layout (public + private subnets across
                       <region>a/<region>b/<region>c). Values are passed through to the
                       underlying configuration-aws-network Network.
@@ -155,7 +155,7 @@ spec:
                         type: object
                         description: >-
                           Restore UXP state from an existing backup during initial provisioning.
-                          Applied once at bootstrap — ignored on subsequent reconciles.
+                          Applied once at bootstrap - ignored on subsequent reconciles.
                           Use this when changing node instance types: provision a new ControlPlane
                           with the desired instanceType and set installFrom to restore state from
                           the existing control plane's backup.
@@ -314,7 +314,7 @@ spec:
                         description: True when the UXP Helm Release is Ready (all UXP pods running).
                         type: boolean
                   backup:
-                    description: Backup status — populated once the EKS cluster is ready and backup is enabled.
+                    description: Backup status - populated once the EKS cluster is ready and backup is enabled.
                     type: object
                     properties:
                       enabled:
@@ -354,7 +354,7 @@ spec:
                         type: string
                   k8gb:
                     description: >-
-                      k8gb producer status — the contract the FleetGslb aggregator consumes.
+                      k8gb producer status - the contract the FleetGslb aggregator consumes.
                     type: object
                     properties:
                       enabled:
@@ -362,13 +362,24 @@ spec:
                         type: string
                       coreDNSEndpoint:
                         description: >-
-                          The k8gb CoreDNS LoadBalancer endpoint (hostname or IP). Populated once
-                          the NLB is provisioned. Must ultimately resolve to an IP for NS glue.
+                          Informational: the CoreDNS NLB hostname. NS glue is built from
+                          the pinned Elastic IPs in glueAddresses, not from this value.
                         type: string
+                      nsName:
+                        description: >-
+                          The k8gb NS name for this cluster (gslb-ns-<geoTag>-<flatZone>.<parentZone>),
+                          consumed by FleetGslb.
+                        type: string
+                      glueAddresses:
+                        description: >-
+                          Pinned CoreDNS Elastic IPs backing the NS glue A records. Consumed by FleetGslb.
+                        type: array
+                        items:
+                          type: string
                       delegationRecord:
                         description: >-
-                          Ready-to-use NS + glue delegation for this cluster, in k8gb's
-                          gslb-ns-<zone>-<geoTag> convention, for FleetGslb to write to the parent zone.
+                          Ready-to-use NS + glue delegation (one NS line plus one A line per
+                          glueAddress) for FleetGslb to write to the parent zone.
                         type: string
                   providerVerticalPodAutoscaling:
                     description: Provider VPA feature status.
@@ -387,7 +398,7 @@ spec:
                       currentInstanceType:
                         description: >-
                           Currently running instance type observed from AWS. Differs from
-                          instanceType when an in-place change was attempted — see the
+                          instanceType when an in-place change was attempted - see the
                           NodeGroupTypeImmutable condition for remediation guidance.
                         type: string
             type: object

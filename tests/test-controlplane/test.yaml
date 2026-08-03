@@ -1219,7 +1219,49 @@ spec:
           enabled: "yes"
           dnsZone: gslb.example.com
           parentZone: example.com
+  observedResources:
+  - apiVersion: ec2.aws.m.upbound.io/v1beta1
+    kind: EIP
+    metadata:
+      name: test-cp-k8gb-eip-0
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: k8gb-eip-0
+    status:
+      atProvider:
+        allocationId: eipalloc-000
+        publicIp: 52.0.0.1
+  - apiVersion: ec2.aws.m.upbound.io/v1beta1
+    kind: EIP
+    metadata:
+      name: test-cp-k8gb-eip-1
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: k8gb-eip-1
+    status:
+      atProvider:
+        allocationId: eipalloc-001
+        publicIp: 52.0.0.2
+  - apiVersion: ec2.aws.m.upbound.io/v1beta1
+    kind: EIP
+    metadata:
+      name: test-cp-k8gb-eip-2
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: k8gb-eip-2
+    status:
+      atProvider:
+        allocationId: eipalloc-002
+        publicIp: 52.0.0.3
   assertResources:
+  - apiVersion: ec2.aws.m.upbound.io/v1beta1
+    kind: EIP
+    metadata:
+      name: test-cp-k8gb-eip-0
+    spec:
+      forProvider:
+        domain: vpc
+        region: us-east-1
   - apiVersion: helm.m.crossplane.io/v1beta1
     kind: Release
     metadata:
@@ -1243,6 +1285,9 @@ spec:
             enabled: false
           coredns:
             serviceType: LoadBalancer
+            service:
+              annotations:
+                service.beta.kubernetes.io/aws-load-balancer-eip-allocations: eipalloc-000,eipalloc-001,eipalloc-002
   - apiVersion: kubernetes.m.crossplane.io/v1alpha1
     kind: Object
     metadata:
@@ -1264,6 +1309,131 @@ spec:
     kind: Usage
     metadata:
       name: test-cp-usage-k8gb-coredns-eks
+  - apiVersion: protection.crossplane.io/v1beta1
+    kind: Usage
+    metadata:
+      name: test-cp-usage-k8gb-eip-0-release
+    spec:
+      of:
+        kind: EIP
+        resourceRef:
+          name: test-cp-k8gb-eip-0
+      by:
+        kind: Release
+        resourceRef:
+          name: test-cp-k8gb
+  - apiVersion: protection.crossplane.io/v1beta1
+    kind: Usage
+    metadata:
+      name: test-cp-usage-k8gb-eip-2-release
+  - apiVersion: protection.crossplane.io/v1beta1
+    kind: Usage
+    metadata:
+      name: test-cp-usage-lbcontroller-k8gb
+    spec:
+      of:
+        kind: Release
+        resourceRef:
+          name: test-cp-lb-controller
+      by:
+        kind: Release
+        resourceRef:
+          name: test-cp-k8gb
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: with-k8gb-eips-pending
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        k8gb:
+          enabled: "yes"
+          dnsZone: gslb.example.com
+          parentZone: example.com
+  assertResources:
+  - apiVersion: ec2.aws.m.upbound.io/v1beta1
+    kind: EIP
+    metadata:
+      name: test-cp-k8gb-eip-0
+  - apiVersion: ec2.aws.m.upbound.io/v1beta1
+    kind: EIP
+    metadata:
+      name: test-cp-k8gb-eip-2
+  # No observed EIPs -> eip_count 3, 0 allocated -> K8gbInstall/WaitingForEIPs.
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    status:
+      controlplane:
+        conditions:
+        - type: Ready
+        - type: K8gbInstall
+          status: "False"
+          reason: WaitingForEIPs
+          message: "Waiting for CoreDNS Elastic IPs: 0/3 allocated. k8gb install is held until all are ready."
+---
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: CompositionTest
+metadata:
+  name: with-k8gb-no-public-subnet
+spec:
+  compositionPath: apis/ctp/composition.yaml
+  xrdPath: apis/ctp/definition.yaml
+  validate: true
+  timeoutSeconds: 60
+  xr:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    spec:
+      parameters:
+        id: test-cp
+        region: us-east-1
+        version: "1.34"
+        nodes:
+          count: 2
+          instanceType: t3.small
+        network:
+          subnets:
+          - availabilityZone: us-east-1a
+            cidrBlock: 192.168.96.0/19
+            type: private
+        k8gb:
+          enabled: "yes"
+          dnsZone: gslb.example.com
+          parentZone: example.com
+  assertResources:
+  # Zero public subnets -> eip_count 0 -> K8gbInstall/NoPublicSubnet.
+  - apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+    metadata:
+      name: test-cp
+    status:
+      controlplane:
+        conditions:
+        - type: Ready
+        - type: K8gbInstall
+          status: "False"
+          reason: NoPublicSubnet
+          message: "k8gb is enabled but the network has no public subnet, so the CoreDNS NLB and k8gb cannot be provisioned. Provide at least one public subnet."
 ---
 apiVersion: meta.dev.upbound.io/v1alpha1
 kind: CompositionTest
@@ -1307,6 +1477,39 @@ spec:
             loadBalancer:
               ingress:
               - hostname: k8gb-nlb-abc123.elb.us-east-1.amazonaws.com
+  - apiVersion: ec2.aws.m.upbound.io/v1beta1
+    kind: EIP
+    metadata:
+      name: test-cp-k8gb-eip-0
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: k8gb-eip-0
+    status:
+      atProvider:
+        allocationId: eipalloc-000
+        publicIp: 52.0.0.1
+  - apiVersion: ec2.aws.m.upbound.io/v1beta1
+    kind: EIP
+    metadata:
+      name: test-cp-k8gb-eip-1
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: k8gb-eip-1
+    status:
+      atProvider:
+        allocationId: eipalloc-001
+        publicIp: 52.0.0.2
+  - apiVersion: ec2.aws.m.upbound.io/v1beta1
+    kind: EIP
+    metadata:
+      name: test-cp-k8gb-eip-2
+      namespace: default
+      annotations:
+        crossplane.io/composition-resource-name: k8gb-eip-2
+    status:
+      atProvider:
+        allocationId: eipalloc-002
+        publicIp: 52.0.0.3
   assertResources:
   # The XR surfaces the k8gb status contract for FleetGslb.
   - apiVersion: aws.platform.upbound.io/v1alpha1
@@ -1318,7 +1521,16 @@ spec:
         k8gb:
           enabled: "yes"
           coreDNSEndpoint: k8gb-nlb-abc123.elb.us-east-1.amazonaws.com
-          delegationRecord: "gslb.example.com. NS gslb-ns-aws-us-east-1-test-cp-gslb.example.com. ; gslb-ns-aws-us-east-1-test-cp-gslb.example.com. A k8gb-nlb-abc123.elb.us-east-1.amazonaws.com"
+          nsName: gslb-ns-aws-us-east-1-test-cp-gslb.example.com
+          glueAddresses:
+          - 52.0.0.1
+          - 52.0.0.2
+          - 52.0.0.3
+          delegationRecord: |-
+            gslb.example.com. NS gslb-ns-aws-us-east-1-test-cp-gslb.example.com.
+            gslb-ns-aws-us-east-1-test-cp-gslb.example.com. A 52.0.0.1
+            gslb-ns-aws-us-east-1-test-cp-gslb.example.com. A 52.0.0.2
+            gslb-ns-aws-us-east-1-test-cp-gslb.example.com. A 52.0.0.3
 ---
 apiVersion: meta.dev.upbound.io/v1alpha1
 kind: CompositionTest
@@ -1726,7 +1938,46 @@ spec:
           enabled: "yes"
           dnsZone: gslb.example.com
           parentZone: example.com
+  observedResources:
+  - apiVersion: ec2.aws.m.upbound.io/v1beta1
+    kind: EIP
+    metadata:
+      name: test-cp-k8gb-eip-0
+      namespace: platform
+      annotations:
+        crossplane.io/composition-resource-name: k8gb-eip-0
+    status:
+      atProvider:
+        allocationId: eipalloc-000
+        publicIp: 52.0.0.1
+  - apiVersion: ec2.aws.m.upbound.io/v1beta1
+    kind: EIP
+    metadata:
+      name: test-cp-k8gb-eip-1
+      namespace: platform
+      annotations:
+        crossplane.io/composition-resource-name: k8gb-eip-1
+    status:
+      atProvider:
+        allocationId: eipalloc-001
+        publicIp: 52.0.0.2
+  - apiVersion: ec2.aws.m.upbound.io/v1beta1
+    kind: EIP
+    metadata:
+      name: test-cp-k8gb-eip-2
+      namespace: platform
+      annotations:
+        crossplane.io/composition-resource-name: k8gb-eip-2
+    status:
+      atProvider:
+        allocationId: eipalloc-002
+        publicIp: 52.0.0.3
   assertResources:
+  - apiVersion: ec2.aws.m.upbound.io/v1beta1
+    kind: EIP
+    metadata:
+      name: test-cp-k8gb-eip-0
+      namespace: platform
   - apiVersion: helm.m.crossplane.io/v1beta1
     kind: Release
     metadata:

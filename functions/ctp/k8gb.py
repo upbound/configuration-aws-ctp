@@ -21,9 +21,37 @@ from .prelude import stamp
 
 
 def add_k8gb_resources(rsp, id_val, k8gb_param, geo_tag, ext_geo_tags,
-                       k8gb_deployed, config):
+                       k8gb_deployed, region, provider_config, eip_count,
+                       eip_alloc_ids, config):
     dns_zone = k8gb_param.get("dnsZone", "")
     parent_zone = k8gb_param.get("parentZone", "")
+
+    # One Elastic IP per public subnet, pinned on the CoreDNS NLB so its glue
+    # is a stable IPv4 A record (docs/gslb-dns-architecture.md §9/§10). EIPs are
+    # AWS MRs (management creds), unlike the child Helm Release below.
+    for i in range(eip_count):
+        eip = {
+            "apiVersion": "ec2.aws.m.upbound.io/v1beta1",
+            "kind": "EIP",
+            "metadata": {
+                "name": f"{id_val}-k8gb-eip-{i}",
+                "namespace": config["namespace"],
+                "annotations": {
+                    "crossplane.io/composition-resource-name": f"k8gb-eip-{i}"
+                }
+            },
+            "spec": {
+                "forProvider": {"domain": "vpc", "region": region},
+                "providerConfigRef": {"name": provider_config, "kind": "ProviderConfig"}
+            }
+        }
+        stamp(eip, config, aws_tags=True)
+        resource.update(rsp.desired.resources[f"k8gb-eip-{i}"], eip)
+
+    # Hold the Release (which creates the NLB) until every EIP is allocated, so
+    # the NLB is created once already carrying its EIPs (adding EIPs to a live
+    # dynamic-IP NLB forces a recreate). Same hold pattern as lbcontroller.py.
+    eips_ready = eip_count > 0 and len(eip_alloc_ids) == eip_count
 
     values = {
         "k8gb": {
@@ -55,6 +83,11 @@ def add_k8gb_resources(rsp, id_val, k8gb_param, geo_tag, ext_geo_tags,
             }
         }
     }
+
+    if eips_ready:
+        values["coredns"]["service"]["annotations"][
+            "service.beta.kubernetes.io/aws-load-balancer-eip-allocations"
+        ] = ",".join(eip_alloc_ids)
 
     release_annotations = {
         "crossplane.io/composition-resource-name": "k8gb-release",
@@ -93,8 +126,9 @@ def add_k8gb_resources(rsp, id_val, k8gb_param, geo_tag, ext_geo_tags,
             }
         }
     }
-    stamp(release, config)
-    resource.update(rsp.desired.resources["k8gb-release"], release)
+    if eips_ready:
+        stamp(release, config)
+        resource.update(rsp.desired.resources["k8gb-release"], release)
 
     # Observe-only Object on the child CoreDNS Service to read its LB endpoint.
     coredns_observe = {

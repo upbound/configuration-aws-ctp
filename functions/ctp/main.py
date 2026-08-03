@@ -50,6 +50,7 @@ from .prelude import (
     derive_k8gb_geo_tag,
     extract_bucket_name,
     extract_cluster_identity,
+    extract_k8gb_eips,
     extract_oidc_info,
     extract_vpc_id,
     get_nodegroup_actual_type,
@@ -57,6 +58,7 @@ from .prelude import (
     is_license_applied,
     is_release_deployed,
     is_resource_ready,
+    public_subnet_count,
 )
 from .runtime_config import add_runtime_config
 from .status import update_status
@@ -123,15 +125,24 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     # the same dnsZone (cross-cloud peers are injected later by FleetGslb).
     k8gb_geo_tag = ""
     k8gb_ext_geo_tags = ""
+    k8gb_eip_count = 0
+    k8gb_eip_alloc_ids = []
+    k8gb_eip_ips = []
     if k8gb_enabled:
         k8gb_geo_tag = derive_k8gb_geo_tag(k8gb, region, id_val)
         k8gb_ext_geo_tags = derive_k8gb_ext_geo_tags(
             id_val, k8gb.get("dnsZone", ""), k8gb_geo_tag, all_ctps)
+        k8gb_eip_count = public_subnet_count(network_param)
 
     observed_resources = {
         name: resource.struct_to_dict(res.resource)
         for name, res in req.observed.resources.items()
     }
+
+    if k8gb_enabled:
+        eips = extract_k8gb_eips(observed_resources, k8gb_eip_count)
+        k8gb_eip_alloc_ids = [e["allocationId"] for e in eips]
+        k8gb_eip_ips = [e["publicIp"] for e in eips]
 
     oidc_url, _cluster_arn, oidc_host, account_id = extract_oidc_info(
         backup, observed_resources
@@ -180,7 +191,8 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
                      access_config, mgmt_policies, iam_param, config)
     add_uxp_release(rsp, id_val, uxp_version, uxp_deployed, mgr_args, config)
     add_usage_resources(rsp, id_val, config, k8gb_enabled=k8gb_enabled,
-                        argocd_enabled=argocd_enabled)
+                        argocd_enabled=argocd_enabled,
+                        k8gb_eip_count=k8gb_eip_count)
 
     # cert-manager is always installed (free component, no license gate) so the
     # k8gb/argocd add-ons can rely on it for Gateway TLS independently of knative.
@@ -202,7 +214,8 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
 
     if k8gb_enabled:
         add_k8gb_resources(rsp, id_val, k8gb, k8gb_geo_tag, k8gb_ext_geo_tags,
-                           k8gb_deployed, config)
+                           k8gb_deployed, region, provider_config,
+                           k8gb_eip_count, k8gb_eip_alloc_ids, config)
 
     if argocd_enabled:
         add_argocd_resources(rsp, id_val, argocd, argocd_deployed,
@@ -236,4 +249,5 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     update_status(rsp, id_val, params, uxp_version, uxp_deployed, backup,
                   role_arn, bucket_name, observed_resources, nodes,
                   ng_actual_type, ng_type_mismatch, vpa, knative,
-                  k8gb, k8gb_geo_tag, license_conflict, config)
+                  k8gb, k8gb_geo_tag, k8gb_eip_ips, k8gb_eip_count,
+                  license_conflict, config)
