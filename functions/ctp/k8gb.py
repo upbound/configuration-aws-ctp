@@ -85,6 +85,9 @@ def add_k8gb_resources(rsp, id_val, k8gb_param, geo_tag, ext_geo_tags,
     }
 
     if eips_ready:
+        # EIP list is positional vs the controller's tag-discovered public
+        # subnets; order is immaterial (fresh vpc EIPs have no AZ affinity),
+        # only the count must match or NLB creation fails.
         values["coredns"]["service"]["annotations"][
             "service.beta.kubernetes.io/aws-load-balancer-eip-allocations"
         ] = ",".join(eip_alloc_ids)

@@ -230,6 +230,9 @@ spec:
                       Enable k8gb (Kubernetes Global Balancer) for health-aware, DNS-based global
                       failover. Installs the AWS Load Balancer Controller, the k8gb operator, and
                       CoreDNS exposed via an NLB, and provisions an Envoy Gateway data plane. See docs/gslb-dns-architecture.md.
+                    x-kubernetes-validations:
+                    - rule: 'self.enabled != "yes" || (has(self.dnsZone) && self.dnsZone != "" && has(self.parentZone) && self.parentZone != "")'
+                      message: 'dnsZone and parentZone are required when k8gb.enabled is "yes"'
                     properties:
                       enabled:
                         type: string

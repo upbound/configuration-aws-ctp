@@ -1079,6 +1079,8 @@ spec:
           instanceType: t3.small
         k8gb:
           enabled: "yes"
+          dnsZone: gslb.example.com
+          parentZone: example.com
   assertResources:
   # Before the EKS cluster name is known, only the IAM Role/Policy + the Usage
   # guard render (Pod Identity + Release wait for status.eks). Envoy Gateway
@@ -1129,6 +1131,8 @@ spec:
           instanceType: t3.small
         k8gb:
           enabled: "yes"
+          dnsZone: gslb.example.com
+          parentZone: example.com
   observedResources:
   # EKS cluster name/account come from status.eks.clusterArn.
   - apiVersion: aws.platform.upbound.io/v1alpha1
