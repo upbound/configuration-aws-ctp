@@ -55,7 +55,7 @@ def _emit_eks_usage(rsp, id_val, cr_name, by_api_version, by_kind, by_name,
 
 
 def add_usage_resources(rsp, id_val, config, k8gb_enabled=False,
-                        argocd_enabled=False):
+                        argocd_enabled=False, k8gb_eip_count=0):
     usage_release_eks = {
         "apiVersion": "protection.crossplane.io/v1beta1",
         "kind": "Usage",
@@ -161,6 +161,70 @@ def add_usage_resources(rsp, id_val, config, k8gb_enabled=False,
             f"{id_val}-k8gb-coredns",
             "k8gb CoreDNS observe Object must be removed before the EKS cluster is deleted",
             config)
+
+        # The controller must outlive the k8gb Release so it deletes the CoreDNS
+        # NLB (and frees its EIPs) before the controller is removed.
+        lbc_k8gb_usage = {
+            "apiVersion": "protection.crossplane.io/v1beta1",
+            "kind": "Usage",
+            "metadata": {
+                "name": f"{id_val}-usage-lbcontroller-k8gb",
+                "namespace": config["namespace"],
+                "annotations": {
+                    "crossplane.io/composition-resource-name": "usage-lbcontroller-k8gb"
+                }
+            },
+            "spec": {
+                "of": {
+                    "apiVersion": "helm.m.crossplane.io/v1beta1",
+                    "kind": "Release",
+                    "resourceRef": {"name": f"{id_val}-lb-controller"}
+                },
+                "by": {
+                    "apiVersion": "helm.m.crossplane.io/v1beta1",
+                    "kind": "Release",
+                    "resourceRef": {"name": f"{id_val}-k8gb"}
+                },
+                "reason": "AWS Load Balancer Controller must outlive the k8gb Release so it deletes the CoreDNS NLB (and frees its EIPs) before the controller is removed",
+                "replayDeletion": True
+            }
+        }
+        stamp(lbc_k8gb_usage, config)
+        resource.update(rsp.desired.resources["usage-lbcontroller-k8gb"], lbc_k8gb_usage)
+
+        # Each CoreDNS Elastic IP must outlive the k8gb Release: releasing an
+        # EIP still associated with the live NLB fails. of: EIP, by: Release.
+        for i in range(k8gb_eip_count):
+            usage = {
+                "apiVersion": "protection.crossplane.io/v1beta1",
+                "kind": "Usage",
+                "metadata": {
+                    "name": f"{id_val}-usage-k8gb-eip-{i}-release",
+                    "namespace": config["namespace"],
+                    "annotations": {
+                        "crossplane.io/composition-resource-name": f"usage-k8gb-eip-{i}-release"
+                    }
+                },
+                "spec": {
+                    "of": {
+                        "apiVersion": "ec2.aws.m.upbound.io/v1beta1",
+                        "kind": "EIP",
+                        "resourceRef": {
+                            "name": f"{id_val}-k8gb-eip-{i}",
+                            "namespace": config["namespace"]
+                        }
+                    },
+                    "by": {
+                        "apiVersion": "helm.m.crossplane.io/v1beta1",
+                        "kind": "Release",
+                        "resourceRef": {"name": f"{id_val}-k8gb"}
+                    },
+                    "reason": "CoreDNS Elastic IP must be released only after the k8gb Release (and its NLB) is gone",
+                    "replayDeletion": True
+                }
+            }
+            stamp(usage, config)
+            resource.update(rsp.desired.resources[f"usage-k8gb-eip-{i}-release"], usage)
 
     if argocd_enabled:
         _emit_eks_usage(

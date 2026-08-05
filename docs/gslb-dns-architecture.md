@@ -1,9 +1,16 @@
 # Fleet GSLB DNS architecture - decision record
 
-- **Date:** 2026-07-16
-- **Status:** Decided (design); implementation not started. k8gb coordination
-  mechanism validated against upstream (the k8gb `resolver` package + docs) on
-  2026-07-16.
+- **Date:** 2026-07-16 (design); implementation status updated 2026-07-31.
+- **Status:** Decided and **partially implemented**. The per-cloud **producer**
+  role is shipped on `main` in all three ctp packages (aws/azure/gcp): always-on
+  cert-manager, k8gb + CoreDNS, ArgoCD, the Envoy Gateway (Gateway API) data
+  plane, the deletion-order `Usage` guards, and the
+  `status.controlplane.k8gb.{coreDNSEndpoint,nsName,glueAddresses,delegationRecord}`
+  contract.
+  **Outstanding:** `configuration-fleet-gslb` (the aggregator, not yet created)
+  and `configuration-resilient-ctp` owning/creating the `Gslb` CR (still
+  consume-only). The k8gb coordination mechanism was validated against upstream
+  (the k8gb `resolver` package + docs) on 2026-07-16.
 - **Scope:** Cross-cutting. Spans `configuration-{aws,azure,gcp}-ctp`,
   `configuration-resilient-ctp`, and a **new** `configuration-fleet-gslb`
   package. Documented here in `configuration-aws-ctp` for convenience; it is
@@ -49,8 +56,11 @@ Both were validated against the k8gb `resolver` package and the k8gb docs:
 Two consequences follow, and both are load-bearing:
 
 1. **CoreDNS must be exposed and mutually reachable on port 53 (UDP and TCP).**
-   External resolvers reach it to resolve the zone, and peer clusters' k8gb reach
-   it to exchange targets/health. Across clouds this means either public `:53` on
+   External resolvers reach it to resolve the zone, and each cluster's k8gb
+   reaches its peers' CoreDNS to *pull* their `localtargets` records (via the
+   `edgeDNSServers` resolver following the NS delegation). Health is inferred,
+   not actively exchanged: a down cluster simply stops returning `localtargets`
+   A records, so peers drop it. Across clouds this means either public `:53` on
    each CoreDNS load balancer or private inter-cloud connectivity.
 2. **The delegation is the whole of the DNS-write automation k8gb needs.**
    Nothing else has to be written to the parent zone. This is exactly why a
@@ -114,8 +124,9 @@ runs on the parent.
   run k8gb + CoreDNS and *publish* their endpoint. This satisfies the enterprise
   requirement **and** keeps full automation.
 - **The parent has native global visibility** - it holds every `ControlPlane`
-  XR, so the aggregator discovers all endpoints via `requiredResources`, with
-  **no shared store and no cross-cloud read credentials**.
+  XR, so the aggregator discovers all endpoints via `function-extra-resources`
+  (driven by the XR's `requiredResources` field), with **no shared store and no
+  cross-cloud read credentials**.
 - **One write credential, one place** - the per-cloud write path collapses to a
   single provider (whichever cloud hosts the main zone), configured once on the
   parent. Because external-dns's only job is the delegation (§2), writing that
@@ -143,7 +154,7 @@ PARENT (management) cluster
  │       • installs k8gb + CoreDNS (LoadBalancer, static IP, :53 UDP+TCP) on its child
  │       • installs cert-manager unconditionally (free; no gate)
  │       • observes the child CoreDNS Service
- │       • surfaces status.k8gb.coreDNSEndpoint (+ delegation record)
+ │       • surfaces status.controlplane.k8gb.coreDNSEndpoint (+ delegationRecord)
  │       • receives the fleet peer geo-tag list from the parent (extGslbClustersGeoTags)
  │       • NO external-dns, NO DNS credentials on the child
  │
@@ -203,8 +214,10 @@ Which failover model fits depends on whether the clusters share resources:
   an asymmetry in how much backs it up:
   - **Same-cloud** (e.g. 2 regions): leadership stands on **two** independent
     signals - the GSLB signal *and* the shared-store heartbeat (SSM/RG/label) -
-    which back each other up. Region-death failover is proven here (Test 1). This
-    is the solid mode today.
+    which back each other up. Same-cloud failover/failback is exercised here
+    (Test 1), though Test 1 emulates the outage by reconcile-pausing the primary
+    (stale heartbeat), not a real region kill or network partition - partition
+    tolerance is not yet covered by test. This is the solid mode today.
   - **Cross-cloud** (e.g. AWS primary / Azure standby): the heartbeat store is
     per-cloud, so peers cannot read each other's heartbeat. Leadership then rests
     on the **GSLB signal alone** (plus each cluster's own self-heartbeat) - a
@@ -256,30 +269,43 @@ whole point of the design). Resolution:
   and HTTP-01 (cannot validate on a standby that is not the DNS target).
 
 Caveats: the private key traverses the parent→child write path (the parent
-already holds everything, so acceptable); renewal re-syncs the `Secret`. Note
-cert-manager is installed unconditionally on every child (§9); it is a free
-component, so there is no licensing consideration.
+already holds everything, so acceptable); renewal re-syncs the `Secret`. A
+**wildcard** cert concentrates risk - one private key for every global hostname
+lands on **every** child, so a single compromised child exposes it fleet-wide;
+where that blast radius is unacceptable, issue **per-host** certs (only the
+hostnames a given child serves) or shorten rotation. Note cert-manager is
+installed unconditionally on every child (§9); it is a free component, so there
+is no licensing consideration.
 
 ## 9. Impact per package
 
-### `configuration-{aws,azure,gcp}-ctp` - become PRODUCERS
-- Add a `k8gb` parameter block (enable + zone/geo inputs, and the fleet peer
-  geo-tag list supplied by the parent) and a `k8gb` status block.
-- Install k8gb + CoreDNS on the child via the existing provider-helm path,
-  exposing CoreDNS as a **LoadBalancer Service on `:53` (UDP + TCP) with a pinned
+### `configuration-{aws,azure,gcp}-ctp` - the PRODUCER role (implemented on `main`)
+- A `k8gb` parameter block (enable + zone/geo inputs, and the fleet peer geo-tag
+  list supplied by the parent) and a `k8gb` status block. **Done.**
+- Installs k8gb + CoreDNS on the child via the existing provider-helm path,
+  exposing CoreDNS as a **LoadBalancer Service on `:53` (UDP + TCP) with a
   static IP**. **No external-dns, no DNS IAM/IRSA.**
-- **Static IP is not a per-cloud one-liner.** AWS can pin NLB Elastic IPs via
-  annotation, but **Azure and GCP require a pre-provisioned static IP resource**
-  (Azure Standard Public IP; GCP reserved regional address) as an additional
-  managed resource with its own IAM, then referenced by the Service. Mixed
-  TCP+UDP on `:53` in one Service is native on AWS NLB but needs the Kubernetes
-  `MixedProtocolLBService` feature gate on Azure/GCP (and newer GKE with
-  subsetting/RBS).
-- Compose an **observe-only** provider-kubernetes `Object` on the child CoreDNS
-  `Service`, and surface `status.…k8gb.coreDNSEndpoint` (+ a ready-to-use
-  delegation record) on the parent-side `ControlPlane` XR. This reintroduces the
-  observe-only `Object` pattern dropped in commit `dc8644d`; see the teardown
-  note below.
+- **Static IP is required on every cloud, and is not a per-cloud one-liner.** On
+  AWS the CoreDNS NLB pins Elastic IPs via the AWS Load Balancer Controller
+  annotation (`service.beta.kubernetes.io/aws-load-balancer-eip-allocations`,
+  one EIP per public subnet); **this is now wired in the aws producer** - the
+  composition allocates one `EIP` per public subnet and passes their allocation
+  IDs into the annotation, so the NLB has a stable IPv4 identity and the emitted
+  glue `A` record is well-formed (glue must be an IPv4 - see §10). **Azure and
+  GCP still require a pre-provisioned static IP resource** (Azure Standard Public IP;
+  GCP reserved regional address) as an additional managed resource with its own
+  IAM, then referenced by the Service. Mixed TCP+UDP on one `:53` Service is
+  accepted by the Kubernetes API on any modern cluster (the `MixedProtocolLBService`
+  gate went beta/on-by-default in v1.24 and **GA in v1.26**, cluster-wide, not a
+  per-cloud switch); whether it *works* depends on the cloud L4 LB
+  implementation - native on the AWS NLB `TCP_UDP` listener, and on GKE it needs
+  backend-service-based (RBS) / subsetting L4 (version-pinned, recent GKE only).
+- Composes an **observe-only** provider-kubernetes `Object` on the child CoreDNS
+  `Service`, and surfaces `status.controlplane.k8gb.coreDNSEndpoint` (+
+  `nsName`, `glueAddresses`, and a ready-to-use `delegationRecord`) on the
+  parent-side `ControlPlane` XR. This
+  reintroduced the observe-only `Object` pattern dropped in commit `dc8644d`; see
+  the teardown note below.
 - **cert-manager is installed unconditionally** (decoupled from the knative
   gate). It is a free component; the previous knative-and-license gating is
   removed. Optional add-ons (knative, k8gb, ArgoCD) stay behind their own flags.
@@ -293,18 +319,20 @@ component, so there is no licensing consideration.
   the CoreDNS LoadBalancer** (static IP + protocol handling above), which lands
   in the existing per-cloud network/identity modules, not the shared add-on
   layer.
-- **Teardown dependency:** the new child-cluster `Object`s (k8gb Helm `Release`,
-  CoreDNS observe `Object`) must carry `Usage` guards protecting the child
-  cluster + its kubeconfig secret, or they orphan-finalize on delete. Only
-  `Release`→cluster and cluster→`Network` guards exist today; the child-cluster
-  deletion-guards fix must land before these Objects ship.
+- **Teardown dependency:** every child-cluster `Object`/`Release` added by an
+  add-on (k8gb Helm `Release`, CoreDNS observe `Object`, LB controller, Envoy
+  Gateway, ArgoCD) carries an `of: EKS, by: <resource>` `Usage` guard so it
+  finishes uninstalling before the cluster/kubeconfig is torn out from under it,
+  otherwise the child Objects orphan-finalize. **Implemented** (`usages.py`),
+  alongside the base `Release`→cluster and cluster→`Network` guards.
 
-> **ctp add-on install model - change required.** cert-manager is today
-> installed *inside* the knative add-on, gated by `knative.enabled` (plus a
-> license gate). The k8gb UI Ingresses need cert-manager **regardless of
-> knative**, so **cert-manager is decoupled and installed unconditionally**. Its
-> readiness signal must be **separated from the knative readiness chain** (today
-> `certmanager_ready` feeds knative gating) so k8gb does not become coupled to
+> **ctp add-on install model (done).** cert-manager was previously installed
+> *inside* the knative add-on, gated by `knative.enabled` (plus a license gate).
+> The ArgoCD add-on's cert and the parent-issued global-hostname cert on the
+> Envoy Gateway listeners need cert-manager **regardless of knative** (k8gb
+> itself installs only CoreDNS and needs no cert-manager), so **cert-manager was
+> decoupled and is now installed unconditionally**, with its readiness signal
+> **separated from the knative readiness chain** so the add-ons never couple to
 > knative being enabled.
 
 ### `configuration-fleet-gslb` - NEW, the AGGREGATOR / WRITER / MEMBERSHIP / CERTS
@@ -336,10 +364,12 @@ component, so there is no licensing consideration.
   This is **net-new**: today the composition only *consumes* an externally-
   created `Gslb` and degrades open when none is present. It will create the
   `Gslb` (a provider-kubernetes `Object` wrapping the CRD) referencing the **HTTP
-  app Ingress** it balances (ArgoCD UI, UXP/console, or an app's HTTP API) with
-  TLS via the parent-synced cert (§8) - **not** the kube-apiserver (no global
-  k8s-API access is planned). Update SPEC §1/§3/§5, which currently scope
-  resilient-ctp as read-only over the `Gslb`.
+  app `HTTPRoute`** (Gateway API) it balances (ArgoCD UI, UXP/console, or an
+  app's HTTP API) with TLS via the parent-synced cert (§8) - **not** the
+  kube-apiserver (no global k8s-API access is planned). Target the current
+  `k8gb.io/v1beta1` CRD group, not the deprecated `k8gb.absa.oss/v1beta1` (still
+  accepted but auto-migrated with a warning). Update SPEC §1/§3/§5, which
+  currently scope resilient-ctp as read-only over the `Gslb`.
 - **Leadership health signal = `spec.gslb.hostname`** - the single hostname whose
   `Gslb` health (ANDed with heartbeat + priority) decides whether this control
   plane may be leader.
@@ -350,9 +380,10 @@ component, so there is no licensing consideration.
 - **Heartbeat backend:** because children no longer run external-dns, the
   **DNS-TXT heartbeat backend** (which depends on external-dns) is not used; use
   the **cloud-resource (SSM/RG/label) backend**. Note that **only the AWS SSM
-  backend is implemented today**; the Azure Resource Group and GCP label backends
-  are design-only (raise `NotImplementedError`) and must be built before those
-  clouds can participate.
+  backend is implemented today** - any non-AWS provider hits a single generic
+  `NotImplementedError`; the Azure Resource Group and GCP label choices exist
+  only as SPEC design (§5.1), not code, and must be built before those clouds can
+  participate.
 - **Failover topology** per §7: active-active geo across clouds, election within
   a cloud.
 
@@ -380,13 +411,25 @@ component, so there is no licensing consideration.
 - **Cross-cluster CoreDNS reachability (hard requirement):** every cluster's
   CoreDNS must be reachable on `:53` (UDP+TCP) by external resolvers **and** by
   peer clusters' k8gb, across clouds. This implies public `:53` exposure (or
-  private inter-cloud connectivity) and a security posture for it. Without it,
-  health-aware cross-cluster answers do not form.
+  private inter-cloud connectivity). Without it, health-aware cross-cluster
+  answers do not form.
+- **Public authoritative DNS is an attack surface (design it in):** an
+  internet-facing `:53/UDP` authoritative server is a prime **amplification /
+  reflection** target. Serve **authoritative-only (no open recursion)**, add
+  **Response Rate Limiting** and cloud DDoS protection (AWS Shield or equivalent),
+  and restrict zone transfers. Operational gotcha: **NLB UDP target groups
+  cannot be health-checked** - expose a separate **TCP** health port (CoreDNS
+  `:53/TCP` or its readiness port) so the target group has something to probe, or
+  the LB blackholes.
 - **Stable glue IPs are a requirement, not a nicety:** stale NS glue is *lame
-  delegation* and takes the **whole zone** down, not one cluster. Pin static IPs
-  on every CoreDNS LB. Per-cloud cost differs (Azure/GCP need a pre-provisioned
-  IP resource + IAM; AWS an EIP annotation), and mixed TCP+UDP:53 needs the
-  `MixedProtocolLBService` gate on Azure/GCP.
+  delegation* and takes the **whole zone** down, not one cluster. Glue must be an
+  **IPv4 `A` record**, so every CoreDNS LB needs a pinned static IP - an NLB/LB
+  that only yields a hostname cannot back a glue record. Per-cloud cost differs
+  (Azure/GCP need a pre-provisioned IP resource + IAM; AWS an EIP allocation on
+  the NLB, now wired, see §9). Mixed TCP+UDP:53 is accepted by the K8s API on
+  any modern cluster (`MixedProtocolLBService` is GA since v1.26, cluster-wide,
+  not per-cloud); the per-cloud variable is the L4 LB implementation (native on
+  AWS NLB; GKE needs RBS/subsetting).
 - **Membership distribution:** the parent must push the geo-tag list to children
   and keep it current; a stale list makes a cluster invisible to its peers.
 
@@ -413,17 +456,23 @@ component, so there is no licensing consideration.
   `extGslbClustersGeoTags` into each child's k8gb `Release`).
 - NS-naming contract between `FleetGslb`'s delegation records and k8gb's expected
   peer NS names.
-- Cross-cluster CoreDNS `:53` exposure and security posture (public vs. private
-  inter-cloud connectivity).
-- Per-cloud static-IP MRs for the CoreDNS LBs (Azure Public IP, GCP reserved
-  address) and the `MixedProtocolLBService` requirement.
-- Child-cluster deletion-guards (`Usage`) fix must land before the k8gb/CoreDNS
-  `Object`s ship.
+- Cross-cluster CoreDNS `:53` exposure and security posture: public vs. private
+  inter-cloud connectivity, authoritative-only + Response Rate Limiting + DDoS
+  protection, and a TCP health-check port for the UDP NLB (see §10).
+- Per-cloud static-IP MRs for the CoreDNS LBs: AWS EIP allocation on the NLB is
+  **done**; still outstanding: Azure Public IP, GCP reserved address. (Mixed
+  TCP+UDP:53 is GA cluster-wide since K8s v1.26; the per-cloud variable is the
+  L4 LB implementation, not the `MixedProtocolLBService` gate.)
+- k8gb CRD group: migrate producer/consumer from the deprecated
+  `k8gb.absa.oss/v1beta1` to the current `k8gb.io/v1beta1` (v0.20.0 still ships
+  both; the legacy group is auto-migrated with a warning).
+- Child-cluster deletion-guards (`Usage`) - **done** (`usages.py`): base guards
+  plus per-add-on `of: EKS` guards for k8gb/CoreDNS/LB-controller/Gateway/ArgoCD.
 - Implement the Azure RG and GCP label heartbeat backends (only AWS SSM exists).
 - Implement the SPEC §6 "unreadable ≠ down" election guard before any
   cross-cloud/region election.
 - cert-manager: decouple from the knative gate and install unconditionally;
-  separate its readiness from the knative chain. (Decided; free component, no
-  license gate.)
+  separate its readiness from the knative chain. **Done** (free component, no
+  license gate).
 - Multi-parent evolution (removes the SPOF; needs a cross-parent aggregation
   story) and cross-cloud single-active via parent-side election.

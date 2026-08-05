@@ -11,8 +11,8 @@ from .prelude import extract_coredns_endpoint
 
 def update_status(rsp, id_val, params, uxp_version, uxp_deployed, backup,
                  role_arn, bucket_name, observed, nodes, ng_actual_type,
-                 ng_type_mismatch, vpa, knative, k8gb, k8gb_geo_tag,
-                 license_conflict, config):
+                 ng_type_mismatch, vpa, knative, k8gb, k8gb_geo_tag, eip_ips,
+                 eip_count, license_conflict, config):
     # rsp.desired.composite.resource is a google.protobuf.Struct — convert
     # so we can read fields out of the partially-built XR.
     xr_dict = resource.struct_to_dict(rsp.desired.composite.resource)
@@ -104,24 +104,28 @@ def update_status(rsp, id_val, params, uxp_version, uxp_deployed, backup,
     if k8gb:
         k8gb_status = {"enabled": k8gb.get("enabled", "no")}
         if k8gb.get("enabled") == "yes":
+            dns_zone = k8gb.get("dnsZone", "")
+            parent_zone = k8gb.get("parentZone", "")
+            # k8gb getNsName (byte-identical v0.15.0..v0.20.0): strip the
+            # ".<parentZone>" suffix from the load-balanced zone, replace the
+            # remaining dots with dashes, and place the geo tag BEFORE the
+            # domain component. This is the contract FleetGslb consumes.
+            zone_label = dns_zone
+            suffix = f".{parent_zone}"
+            if zone_label.endswith(suffix):
+                zone_label = zone_label[: -len(suffix)]
+            zone_label = zone_label.replace(".", "-")
+            ns_name = f"gslb-ns-{k8gb_geo_tag}-{zone_label}.{parent_zone}"
+            k8gb_status["nsName"] = ns_name
+            # Informational NLB hostname (glue itself comes from the EIPs).
             endpoint = extract_coredns_endpoint(observed)
             if endpoint:
-                dns_zone = k8gb.get("dnsZone", "")
-                parent_zone = k8gb.get("parentZone", "")
-                # k8gb getNsName (byte-identical v0.15.0..v0.20.0): strip the
-                # ".<parentZone>" suffix from the load-balanced zone, replace the
-                # remaining dots with dashes, and place the geo tag BEFORE the
-                # domain component. This is the contract FleetGslb consumes.
-                zone_label = dns_zone
-                suffix = f".{parent_zone}"
-                if zone_label.endswith(suffix):
-                    zone_label = zone_label[: -len(suffix)]
-                zone_label = zone_label.replace(".", "-")
-                ns_name = f"gslb-ns-{k8gb_geo_tag}-{zone_label}.{parent_zone}"
                 k8gb_status["coreDNSEndpoint"] = endpoint
-                k8gb_status["delegationRecord"] = (
-                    f"{dns_zone}. NS {ns_name}. ; {ns_name}. A {endpoint}"
-                )
+            if eip_ips and len(eip_ips) == eip_count:
+                k8gb_status["glueAddresses"] = eip_ips
+                lines = [f"{dns_zone}. NS {ns_name}."]
+                lines += [f"{ns_name}. A {ip}" for ip in eip_ips]
+                k8gb_status["delegationRecord"] = "\n".join(lines)
         status["controlplane"]["k8gb"] = k8gb_status
 
     conditions = []
@@ -165,6 +169,32 @@ def update_status(rsp, id_val, params, uxp_version, uxp_deployed, backup,
                 "license secret."
             )
         })
+
+    # Diagnostic only: the XR already stays non-Ready via the always-on CoreDNS
+    # observe Object, so this does not gate the Ready condition above.
+    k8gb_enabled = bool(k8gb) and k8gb.get("enabled") == "yes"
+    if k8gb_enabled and not (eip_ips and len(eip_ips) == eip_count):
+        if eip_count == 0:
+            conditions.append({
+                "type": "K8gbInstall",
+                "status": "False",
+                "reason": "NoPublicSubnet",
+                "message": (
+                    "k8gb is enabled but the network has no public subnet, so the "
+                    "CoreDNS NLB and k8gb cannot be provisioned. Provide at least "
+                    "one public subnet."
+                )
+            })
+        else:
+            conditions.append({
+                "type": "K8gbInstall",
+                "status": "False",
+                "reason": "WaitingForEIPs",
+                "message": (
+                    f"Waiting for CoreDNS Elastic IPs: {len(eip_ips)}/{eip_count} "
+                    "allocated. k8gb install is held until all are ready."
+                )
+            })
 
     # Attach conditions and write the whole status block in one update so we
     # don't have to mutate the protobuf Struct in place (Struct supports

@@ -24,8 +24,8 @@ Extend the `ControlPlane` composition so a child cluster gets:
   stable app LB IPs) when `k8gb.enabled`,
 - **k8gb** (operator + CoreDNS via a UDP+TCP NLB) installed when `k8gb.enabled`,
 - **ArgoCD** (+ UI Ingress + a root app-of-apps `Application`) when `argocd.enabled`,
-- the **status contract** `status.controlplane.k8gb.coreDNSEndpoint` +
-  `delegationRecord` surfaced for the FleetGslb aggregator to consume.
+- the **status contract** `status.controlplane.k8gb.coreDNSEndpoint`, `nsName`,
+  `glueAddresses`, `delegationRecord` surfaced for the FleetGslb aggregator to consume.
 
 ## Repo orientation (for fresh context)
 
@@ -176,7 +176,8 @@ mirror the aws-eks EBS CSI shape).
     `parentZone`, `clusterGeoTag` (optional; unique-per-CP default derived
     in-function - see below), `strategy` (`failover`/`roundRobin`/`geoip`,
     default `failover`).
-  - `status.controlplane.k8gb`: `enabled`, `coreDNSEndpoint`, `delegationRecord`.
+  - `status.controlplane.k8gb`: `enabled`, `coreDNSEndpoint`, `nsName`,
+    `glueAddresses`, `delegationRecord`.
 - **`functions/ctp/k8gb.py`** `add_k8gb_resources(...)`:
   - k8gb `Release` (chart `k8gb`, repo `https://www.k8gb.io`, **version pinned to
     match resilient-ctp's `Gslb` v1beta1 consumer - not latest**): values reuse
@@ -208,12 +209,13 @@ mirror the aws-eks EBS CSI shape).
   guard them regardless.)
 - **`functions/ctp/status.py`**: populate `status.controlplane.k8gb` -
   `enabled`, `coreDNSEndpoint` (from the observed CoreDNS Service Object),
+  `nsName` (the k8gb NS name), `glueAddresses` (the pinned CoreDNS EIPs), and
   `delegationRecord` (computed NS+glue string). **This is the contract the
   FleetGslb aggregator reads - keep the field names stable, and make the NS names
   match k8gb's `ClusterNSName`/`ExtClusterNSNames` convention** (not an ad-hoc
   format), or FleetGslb's later writes will not line up with what each k8gb
-  expects. Note `coreDNSEndpoint` must ultimately resolve to an **IP** for glue
-  records (see the EIP requirement in Assumptions).
+  expects. Glue is built from `glueAddresses` (the pinned EIPs), not from
+  `coreDNSEndpoint` - see the EIP requirement in Assumptions.
 - **`main.py`**: `if k8gb and k8gb.get("enabled") == "yes": add_k8gb_resources(...)`.
 - Tests: k8gb `Release` + CoreDNS observe `Object` + both `Usage`s render when
   enabled, absent when disabled.
@@ -275,18 +277,18 @@ mirror the aws-eks EBS CSI shape).
   (already used by knative), and the LB controller's IAM Role +
   `PodIdentityAssociation` reuse the existing AWS provider MRs (aws-eks already
   uses `PodIdentityAssociation` for EBS CSI). Confirm they resolve.
-- Keep the FleetGslb status contract (`coreDNSEndpoint`, `delegationRecord`) stable
-  once defined in Step 4.
+- Keep the FleetGslb status contract (`coreDNSEndpoint`, `nsName`, `glueAddresses`,
+  `delegationRecord`) stable once defined in Step 4.
 
 ## Assumptions / deferred
 
 - Public git repo for ArgoCD (repo credentials Secret deferred).
 - Cross-cloud k8gb mesh membership (`extGslbClustersGeoTags` across clouds) is a
   fleet-layer concern; this PR wires only same-cloud peers (or none).
-- Stable CoreDNS glue IPs (NLB Elastic IPs) - deferred here, but **required the
-  moment FleetGslb starts writing glue**: NS glue must be A records (IPs), and an
-  NLB without an EIP yields a rotating hostname, not a glue-able IP. Pin EIPs when
-  the delegation goes live.
+- Stable CoreDNS glue IPs (NLB Elastic IPs) - **DONE/shipped in the aws producer**:
+  one EIP is pinned per public subnet on the CoreDNS NLB, and `status.controlplane.k8gb.glueAddresses`/`delegationRecord`
+  publish only once all pinned EIPs are allocated. NS glue is now built from those
+  EIPs, not from the NLB's (rotating) hostname.
 - Cross-cluster CoreDNS reachability on `:53` (peer k8gb + external resolvers) and
   its security posture - a fleet-layer concern, not exercised by this PR.
 - azure-ctp / gcp-ctp ports - later PRs. **NOT just LB annotations:** Azure/GCP

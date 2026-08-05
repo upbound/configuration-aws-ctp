@@ -1,5 +1,5 @@
 """
-00-prelude — shared extractors and helpers.
+00-prelude - shared extractors and helpers.
 
 The read-only logic that inspects parameters and observed state to derive
 values consumed by every other section.
@@ -108,7 +108,7 @@ def is_resource_ready(observed: Dict, name: str) -> bool:
 def extract_cluster_identity(observed: Dict) -> tuple:
     """Extract (cluster_name, account_id, region) from the composed EKS XR's
     status.eks.clusterArn (configuration-aws-eks v2.0.2+). Unlike
-    extract_oidc_info this is not gated on backup — the k8gb add-ons need the
+    extract_oidc_info this is not gated on backup - the k8gb add-ons need the
     cluster name/account for Pod Identity regardless of backup. Returns empty
     strings until the EKS XR surfaces clusterArn."""
     obs = observed.get("eks-cluster")
@@ -239,6 +239,36 @@ def extract_coredns_endpoint(observed: Dict) -> str:
         return ""
     first = ingress[0]
     return first.get("hostname") or first.get("ip") or ""
+
+
+def public_subnet_count(network_param: Dict) -> int:
+    """Number of public subnets the CoreDNS NLB will span; one EIP is pinned
+    per public subnet. Defaults to 3 (network._default_subnets) when the caller
+    supplies no explicit subnet list."""
+    subnets = network_param.get("subnets")
+    if not subnets:
+        return 3
+    # An explicit subnets list with zero "type: public" entries returns 0, which
+    # withholds the k8gb Release - an internet-facing CoreDNS NLB needs a public subnet.
+    return sum(1 for s in subnets if s.get("type") == "public")
+
+
+def extract_k8gb_eips(observed: Dict, count: int) -> list:
+    """Allocated CoreDNS EIPs, in stable index order. Returns
+    [{"allocationId", "publicIp"}, ...] for each k8gb-eip-<i> whose EIP MR has
+    both fields under status.atProvider; entries still allocating are omitted."""
+    result = []
+    for i in range(count):
+        obs = observed.get(f"k8gb-eip-{i}")
+        if not obs:
+            continue
+        res = obs.resource if hasattr(obs, "resource") else obs
+        at = res.get("status", {}).get("atProvider", {})
+        alloc = at.get("allocationId")
+        ip = at.get("publicIp")
+        if alloc and ip:
+            result.append({"allocationId": alloc, "publicIp": ip})
+    return result
 
 
 def get_nodegroup_actual_type(observed: Dict) -> str:

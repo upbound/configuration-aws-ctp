@@ -115,8 +115,9 @@ When `k8gb.enabled: "yes"`, the control plane becomes a **producer** in the flee
 GSLB architecture ([`docs/gslb-dns-architecture.md`](docs/gslb-dns-architecture.md)):
 it installs the AWS Load Balancer Controller (via EKS Pod Identity), the k8gb
 operator, and CoreDNS exposed through an NLB serving UDP+TCP:53, and surfaces
-`status.controlplane.k8gb.coreDNSEndpoint` + `delegationRecord` for the parent-side
-FleetGslb aggregator. Parameters: `dnsZone` (load-balanced zone), `parentZone`,
+`status.controlplane.k8gb.coreDNSEndpoint`, `nsName`, `glueAddresses`, and
+`delegationRecord` for the parent-side FleetGslb aggregator. Parameters:
+`dnsZone` (load-balanced zone), `parentZone`,
 `clusterGeoTag` (defaults to `aws-<region>-<id>`), and `strategy`
 (`failover`/`roundRobin`/`geoip`). See
 [`examples/controlplane/with-k8gb.yaml`](examples/controlplane/with-k8gb.yaml).
