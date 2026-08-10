@@ -91,7 +91,9 @@ test = e2etest.E2ETest(
 
 # The test runner expects an "items" array, one entry per test.
 item = test.model_dump(by_alias=True, exclude_none=True)
-# Drop the model-default crossplane.state (Running) so the emitted E2ETest matches the
-# original manifest; Running is the platform default anyway.
+# Strip the two model-default fields the retired test.yaml never carried, so the
+# emitted E2ETest is byte-identical to it (both equal the platform defaults):
+#   spec.crossplane.state == "Running", spec.setupTimeoutSeconds == 600
 item["spec"]["crossplane"].pop("state", None)
+item["spec"].pop("setupTimeoutSeconds", None)
 print(yaml.dump({"items": [item]}))
