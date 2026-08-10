@@ -30,7 +30,7 @@ Extend the `ControlPlane` composition so a child cluster gets:
 ## Repo orientation (for fresh context)
 
 - Composition function lives in `functions/ctp/` (Python). Entry point
-  `main.py::compose(req, rsp)`; ordered sibling modules: `prelude.py` (helpers),
+  `function/fn.py::compose(req, rsp)`; ordered sibling modules under `function/`: `prelude.py` (helpers),
   `network.py`, `eks.py`, `uxp.py`, `usages.py`, `backup.py`, `irsa.py`,
   `licensing.py`, `vpa.py`, `knative.py`, `runtime_config.py`, `status.py`.
 - XRD: `apis/ctp/definition.yaml`. Composition: `apis/ctp/composition.yaml`.
@@ -46,8 +46,8 @@ Extend the `ControlPlane` composition so a child cluster gets:
     reports `status.atProvider.state == "deployed"` (see `is_release_deployed`
     in `prelude.py` and how `uxp.py`/`knative.py` use it).
   - Every resource is passed through `prelude.stamp(...)` (last-reconcile-date annotation).
-- **Tests:** composition tests in `tests/test-controlplane/test.yaml`
-  (`kind: CompositionTest`, `assertResources`). e2e in
+- **Tests:** composition tests in `tests/test-controlplane/` (python embedded test
+  package; `kind: CompositionTest` with `assertResources`, cases in `test/_cases.py`). e2e in
   `tests/e2etest-controlplane/`.
 - **Verify:** `up project build` then `up test run tests/*` (offline). e2e:
   `up test run tests/* --e2e` (CI runs it only on the `run-e2e-tests` label).
