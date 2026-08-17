@@ -11,7 +11,7 @@ appears.
   everything.
 - The GatewayClass `eg` points at an EnvoyProxy CR carrying the AWS NLB
   annotations, so every Gateway's data-plane Service becomes an NLB via the AWS
-  Load Balancer Controller (installed when k8gb or argocd - see main.py).
+  Load Balancer Controller (installed when k8gb or argocd - see fn.py).
 - The EnvoyProxy + GatewayClass Objects wait on the release being deployed so the
   CRDs exist first (same pattern as the argocd app / knative CR gates).
 """

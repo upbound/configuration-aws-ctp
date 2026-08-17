@@ -2,7 +2,7 @@
 controller restart + optional Restore-from-backup.
 
 Gated by the caller on backup.enabled == "yes", OIDC URL present, and UXP
-deployed — see compose() in main.py.
+deployed — see compose() in fn.py.
 """
 
 import json
