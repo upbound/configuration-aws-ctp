@@ -7,7 +7,7 @@ from .prelude import stamp
 
 def add_eks_resource(rsp, id_val, region, provider_config, version, nodes,
                     access_config, mgmt_policies, iam_param, config,
-                    naming="Generated"):
+                    naming="Generated", external_names=None):
     eks = {
         "apiVersion": "aws.platform.upbound.io/v1alpha1",
         "kind": "EKS",
@@ -38,6 +38,12 @@ def add_eks_resource(rsp, id_val, region, provider_config, version, nodes,
     # the three IAM roles and the node group name-as-identifier, so a stateless
     # bootstrap re-adopts them without any AWS query.
     eks["spec"]["parameters"]["naming"] = naming
+
+    # Cluster, node group and the IAM roles are name-as-identifier, so upstream
+    # deterministic naming covers them; the Pod Identity association is not, and
+    # comes from the adopt map. Inert until configuration-aws-eks supports it.
+    if external_names:
+        eks["spec"]["parameters"]["externalNames"] = external_names
 
     stamp(eks, config)
     resource.update(rsp.desired.resources["eks-cluster"], eks)

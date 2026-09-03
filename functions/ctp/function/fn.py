@@ -211,12 +211,19 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     ng_actual_type = get_nodegroup_actual_type(observed_resources)
     ng_type_mismatch = bool(ng_actual_type) and ng_actual_type != nodes.get("instanceType", "")
 
+    # --- Adopt: external-names discovered by function-aws-query ---
+    # Only the adopt Composition fills context.adopt; on the default Composition
+    # this is an empty dict, external_names is empty, and every use is a no-op.
+    adopt_ctx = context_dict.get("adopt", {})
+    external_names = build_external_names(
+        adopt_ctx, id_val, cluster_name, cluster_account_id, oidc_host)
+
     # --- Compose resources ---
     add_network_resource(rsp, id_val, region, provider_config, mgmt_policies,
-                         network_param, config)
+                         network_param, config, external_names=external_names)
     add_eks_resource(rsp, id_val, region, provider_config, version, nodes,
                      access_config, mgmt_policies, iam_param, config,
-                     naming=naming)
+                     naming=naming, external_names=external_names)
     add_uxp_release(rsp, id_val, uxp_version, uxp_deployed, mgr_args, config)
     add_usage_resources(rsp, id_val, config, k8gb_enabled=k8gb_enabled,
                         argocd_enabled=argocd_enabled,
@@ -289,12 +296,7 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
         _res["spec"]["managementPolicies"] = mgmt_policies
         resource.update(rsp.desired.resources[_name], _res)
 
-    # --- Adopt: inject external-names discovered by function-aws-query ---
-    # Only the adopt Composition fills context.adopt; on the default Composition
-    # this is an empty dict and the whole block is a no-op.
-    adopt_ctx = context_dict.get("adopt", {})
-    external_names = build_external_names(
-        adopt_ctx, id_val, cluster_name, cluster_account_id, oidc_host)
+    # --- Adopt: inject the external-names discovered above ---
     apply_external_names(rsp, external_names)
 
     update_status(rsp, id_val, params, uxp_version, uxp_deployed, backup,
