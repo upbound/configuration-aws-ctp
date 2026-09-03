@@ -128,6 +128,7 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     management_mode = params.get("managementMode", "Full")
     mgmt_policies = params.get("managementPolicies") or _MODE_POLICIES.get(
         management_mode, _MODE_POLICIES["Full"])
+    naming = params.get("naming", "Generated")
     uxp_version = params.get("uxp", {}).get("version", "2.2.1-up.1")
     vpa = params.get("providerVerticalPodAutoscaling")
     knative = params.get("knative")
@@ -212,7 +213,8 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     add_network_resource(rsp, id_val, region, provider_config, mgmt_policies,
                          network_param, config)
     add_eks_resource(rsp, id_val, region, provider_config, version, nodes,
-                     access_config, mgmt_policies, iam_param, config)
+                     access_config, mgmt_policies, iam_param, config,
+                     naming=naming)
     add_uxp_release(rsp, id_val, uxp_version, uxp_deployed, mgr_args, config)
     add_usage_resources(rsp, id_val, config, k8gb_enabled=k8gb_enabled,
                         argocd_enabled=argocd_enabled,

@@ -103,6 +103,7 @@ spec:
 | `providerVerticalPodAutoscaling` | no | Enable VPA for UXP providers (CPU/memory bounds). |
 | `managementPolicies` | no | Crossplane management policies. No schema default: when set it wins over `managementMode`. |
 | `managementMode` | no | Lifecycle: `Full` (default, standard), `Provision` (create/adopt/update, never delete), `ObserveOnly` (watch only), `Deprovision` (adopt and delete). See below. |
+| `naming` | no | How the composed EKS resources are named, forwarded to the EKS XR: `Generated` (default) or `Deterministic` (names derived from `id`, so the cluster, its three IAM roles and the node group are adoptable by name with no AWS query). **Destructive to change on a live control plane** - Crossplane cannot rename a composed resource, so it deletes the EKS cluster and builds a replacement. |
 
 > **cert-manager** is installed unconditionally on every control plane (a free
 > dependency of Knative/k8gb/ArgoCD Gateway TLS). **Envoy Gateway (Gateway API)**
