@@ -285,7 +285,7 @@ def add_lbcontroller_resources(rsp, id_val, provider_config, cluster_name,
             }
         }
     }
-    stamp(iam_role, config, aws_tags=True)
+    stamp(iam_role, config, aws_tags=True, resource_tag="lb-controller-role")
     resource.update(rsp.desired.resources["lb-controller-role"], iam_role)
 
     iam_policy = {
@@ -308,7 +308,7 @@ def add_lbcontroller_resources(rsp, id_val, provider_config, cluster_name,
             }
         }
     }
-    stamp(iam_policy, config, aws_tags=True)
+    stamp(iam_policy, config, aws_tags=True, resource_tag="lb-controller-policy")
     resource.update(rsp.desired.resources["lb-controller-policy"], iam_policy)
 
     attachment = {
@@ -334,6 +334,8 @@ def add_lbcontroller_resources(rsp, id_val, provider_config, cluster_name,
             }
         }
     }
+    # RolePolicyAttachment has no forProvider.tags in its CRD, so it cannot
+    # carry an identity tag; it is adopted by its derived external-name instead.
     stamp(attachment, config)
     resource.update(rsp.desired.resources["lb-controller-attach"], attachment)
 
@@ -371,7 +373,7 @@ def add_lbcontroller_resources(rsp, id_val, provider_config, cluster_name,
             }
         }
     }
-    stamp(pod_identity, config)
+    stamp(pod_identity, config, aws_tags=True, resource_tag="lb-controller-pia")
     resource.update(rsp.desired.resources["lb-controller-pia"], pod_identity)
 
     release_annotations = {

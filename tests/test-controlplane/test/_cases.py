@@ -665,10 +665,14 @@ CASES = [
               'assertResources': [{'apiVersion': 'eks.aws.m.upbound.io/v1beta1',
                                    'kind': 'PodIdentityAssociation',
                                    'metadata': {'name': 'test-cp-lb-controller-pia'},
+                                   # PodIdentityAssociation does accept forProvider.tags, so
+                                   # it carries the identity tags like the other AWS MRs.
                                    'spec': {'forProvider': {'clusterName': 'test-cp-abc12345',
                                                             'namespace': 'kube-system',
                                                             'serviceAccount': 'aws-load-balancer-controller',
-                                                            'roleArn': 'arn:aws:iam::123456789012:role/test-cp-lb-controller'}}},
+                                                            'roleArn': 'arn:aws:iam::123456789012:role/test-cp-lb-controller',
+                                                            'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                                     'upbound.io/ctp-resource': 'lb-controller-pia'}}}},
                                   {'apiVersion': 'helm.m.crossplane.io/v1beta1',
                                    'kind': 'Release',
                                    'metadata': {'name': 'test-cp-lb-controller'},
@@ -1386,4 +1390,31 @@ CASES = [
                                    'kind': 'Release',
                                    'metadata': {'name': 'test-cp-uxp'},
                                    'spec': {'managementPolicies': ['*']}}]}},
+    # Identity tags: every AWS resource this configuration owns carries
+    # upbound.io/ctp-id (the adoption key) and upbound.io/ctp-resource (which
+    # logical resource it is), so a stateless bootstrap can find them again.
+    {'name': 'identity-tags-on-owned-aws-resources',
+     'spec': {'compositionPath': 'apis/ctp/composition.yaml',
+              'xrdPath': 'apis/ctp/definition.yaml',
+              'validate': True,
+              'timeoutSeconds': 60,
+              'xr': {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                     'kind': 'ControlPlane',
+                     'metadata': {'name': 'test-cp'},
+                     'spec': {'parameters': {'id': 'test-cp',
+                                             'region': 'us-east-1',
+                                             'version': '1.34',
+                                             'nodes': {'count': 2,
+                                                       'instanceType': 't3.small'},
+                                             'k8gb': {'enabled': 'yes',
+                                                      'dnsZone': 'gslb.example.com',
+                                                      'parentZone': 'example.com'}}}},
+              'assertResources': [{'apiVersion': 'ec2.aws.m.upbound.io/v1beta1',
+                                   'kind': 'EIP',
+                                   'metadata': {'name': 'test-cp-k8gb-eip-0'},
+                                   # region is required by the EIP model, so the
+                                   # assertion has to carry it to typecheck.
+                                   'spec': {'forProvider': {'region': 'us-east-1',
+                                                            'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                                     'upbound.io/ctp-resource': 'k8gb-eip-0'}}}}]}},
 ]

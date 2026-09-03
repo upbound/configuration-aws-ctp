@@ -105,6 +105,10 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     # own namespace. Falls back to "default" when unset.
     config["namespace"] = xr.get("metadata", {}).get("namespace") or "default"
 
+    # The adoption key. stamp() writes it to spec.forProvider.tags on every AWS
+    # resource this configuration owns; the adopt path queries on it.
+    config["ctp_id"] = params.get("id", "")
+
     id_val = params.get("id", "")
     region = params.get("region", "")
     provider_config = params.get("providerConfigName", "default")

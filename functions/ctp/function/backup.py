@@ -39,7 +39,7 @@ def add_backup_resources(rsp, id_val, bucket_region, provider_config,
             }
         }
     }
-    stamp(bucket, config, aws_tags=True)
+    stamp(bucket, config, aws_tags=True, resource_tag="backup-bucket")
     resource.update(rsp.desired.resources["backup-bucket"], bucket)
 
     # BackupConfig — the thanos objstore library requires config.endpoint;

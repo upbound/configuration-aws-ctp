@@ -45,7 +45,7 @@ def add_k8gb_resources(rsp, id_val, k8gb_param, geo_tag, ext_geo_tags,
                 "providerConfigRef": {"name": provider_config, "kind": "ProviderConfig"}
             }
         }
-        stamp(eip, config, aws_tags=True)
+        stamp(eip, config, aws_tags=True, resource_tag=f"k8gb-eip-{i}")
         resource.update(rsp.desired.resources[f"k8gb-eip-{i}"], eip)
 
     # Hold the Release (which creates the NLB) until every EIP is allocated, so

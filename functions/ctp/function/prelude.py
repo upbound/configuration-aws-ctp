@@ -9,15 +9,22 @@ import re
 from typing import Dict, List, Optional
 
 
-def stamp(resource_dict: dict, config: Dict, aws_tags: bool = False) -> None:
-    """Stamp a resource with the current reconciliation timestamp.
+def stamp(resource_dict: dict, config: Dict, aws_tags: bool = False,
+          resource_tag: str = "") -> None:
+    """Stamp a resource with the current reconciliation timestamp and identity.
 
     Mirrors the labs/python-devex-ai pattern: every resource carries
     `last-reconcile-date` as a metadata annotation so an operator can see when
     this composition function last touched it. AWS managed resources that
     accept native tags (S3 Bucket, IAM Role/Policy/OIDC Provider, EKS
-    Cluster/NodeGroup) also get the timestamp in `spec.forProvider.tags` so
-    it propagates to the AWS-side object.
+    Cluster/NodeGroup, EIP) also get the timestamp in `spec.forProvider.tags`.
+
+    Those AWS tags additionally carry the control plane's identity:
+    `upbound.io/ctp-id` is the control plane's `id` and `upbound.io/ctp-resource`
+    is the logical resource name. AWS assigns most identifiers itself, so these
+    tags are the only way a stateless bootstrap can find these resources again
+    and adopt them instead of creating duplicates. An untagged resource is not
+    adoptable.
     """
     meta = resource_dict.setdefault("metadata", {})
     ann = meta.setdefault("annotations", {})
@@ -27,6 +34,10 @@ def stamp(resource_dict: dict, config: Dict, aws_tags: bool = False) -> None:
         fp = resource_dict.setdefault("spec", {}).setdefault("forProvider", {})
         tags = fp.setdefault("tags", {})
         tags["last-reconcile-date"] = config["last_reconcile_date"]
+        if config.get("ctp_id"):
+            tags["upbound.io/ctp-id"] = config["ctp_id"]
+        if resource_tag:
+            tags["upbound.io/ctp-resource"] = resource_tag
 
 
 def check_license_conflict(id_val: str, license_param: Optional[Dict],
