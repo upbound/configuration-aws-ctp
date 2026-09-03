@@ -19,6 +19,7 @@ ordered section it corresponds to):
   certmanager.py        (09a) always-on cert-manager Helm Release
   knative.py            (09) knative-operator + serving CR
   runtime_config.py     (10) UpboundRuntimeConfig (ProviderVPA + Knative caps)
+  adopt.py              (11) external-name discovery for the adopt Composition
   status.py             (99) XR status writeback + ClaimConditions
 
 Cluster metadata (OIDC issuer/ARN, running node-group instance type) is read
@@ -34,6 +35,7 @@ from crossplane.function import logging, resource, response
 from crossplane.function.proto.v1 import run_function_pb2 as fnv1
 from crossplane.function.proto.v1 import run_function_pb2_grpc as grpcv1
 
+from .adopt import apply_external_names, build_external_names
 from .argo import add_argocd_resources
 from .backup import add_backup_resources
 from .certmanager import add_certmanager_resources
@@ -286,6 +288,14 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
             continue
         _res["spec"]["managementPolicies"] = mgmt_policies
         resource.update(rsp.desired.resources[_name], _res)
+
+    # --- Adopt: inject external-names discovered by function-aws-query ---
+    # Only the adopt Composition fills context.adopt; on the default Composition
+    # this is an empty dict and the whole block is a no-op.
+    adopt_ctx = context_dict.get("adopt", {})
+    external_names = build_external_names(
+        adopt_ctx, id_val, cluster_name, cluster_account_id, oidc_host)
+    apply_external_names(rsp, external_names)
 
     update_status(rsp, id_val, params, uxp_version, uxp_deployed, backup,
                   role_arn, bucket_name, observed_resources, nodes,

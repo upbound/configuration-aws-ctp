@@ -1457,4 +1457,80 @@ CASES = [
                                    'kind': 'EKS',
                                    'metadata': {'name': 'test-cp'},
                                    'spec': {'parameters': {'naming': 'Deterministic'}}}]}},
+    # Adopt path: a synthetic context.adopt.tagged makes the composition inject
+    # crossplane.io/external-name on the k8gb EIP, so Crossplane observes the
+    # existing Elastic IP instead of allocating a second one.
+    #
+    # Rendered against the default Composition on purpose. The ctp function reads
+    # context.adopt whichever Composition invoked it, so this covers exactly the
+    # same code path, while apis/ctp/compositions/adopt.yaml cannot be rendered
+    # offline at all: function-aws-query returns a fatal result when its AWS call
+    # fails, so its steps need live credentials and real AWS calls even when the
+    # test supplies the context they would have produced.
+    {'name': 'adopt-injects-eip-external-name',
+     'spec': {'compositionPath': 'apis/ctp/composition.yaml',
+              'xrdPath': 'apis/ctp/definition.yaml',
+              'validate': True,
+              'timeoutSeconds': 60,
+              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:elastic-ip/eipalloc-0abc',
+                                                'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                         'upbound.io/ctp-resource': 'k8gb-eip-0'}}],
+                                    'assoc': [],
+                                    'pia': []}},
+              'xr': {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                     'kind': 'ControlPlane',
+                     'metadata': {'name': 'test-cp'},
+                     'spec': {'parameters': {'id': 'test-cp',
+                                             'region': 'us-east-1',
+                                             'version': '1.34',
+                                             'managementMode': 'Provision',
+                                             'nodes': {'count': 2,
+                                                       'instanceType': 't3.small'},
+                                             'k8gb': {'enabled': 'yes',
+                                                      'dnsZone': 'gslb.example.com',
+                                                      'parentZone': 'example.com'}}}},
+              'assertResources': [{'apiVersion': 'ec2.aws.m.upbound.io/v1beta1',
+                                   'kind': 'EIP',
+                                   'metadata': {'name': 'test-cp-k8gb-eip-0',
+                                                'annotations': {'crossplane.io/external-name': 'eipalloc-0abc'}}}]}},
+    # Derived identifiers need no AWS query: the OIDC provider's ID is its ARN and
+    # a role-policy attachment is imported as role-name/policy-arn. Both are built
+    # from values the composition already holds, so they are injected on any path
+    # that has an observed cluster ARN and OIDC issuer - the adopt Composition is
+    # not required for these two, only for the tag-discovered ones.
+    {'name': 'adopt-derives-oidc-and-attachment',
+     'spec': {'compositionPath': 'apis/ctp/composition.yaml',
+              'xrdPath': 'apis/ctp/definition.yaml',
+              'validate': True,
+              'timeoutSeconds': 60,
+              'xr': {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                     'kind': 'ControlPlane',
+                     'metadata': {'name': 'test-cp'},
+                     'spec': {'parameters': {'id': 'test-cp',
+                                             'region': 'us-east-1',
+                                             'version': '1.34',
+                                             'managementMode': 'Provision',
+                                             'nodes': {'count': 2,
+                                                       'instanceType': 't3.small'},
+                                             'backup': {'enabled': 'yes',
+                                                        'location': 'arn:aws:s3:::my-backup-bucket'}}}},
+              'observedResources': [{'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                                     'kind': 'EKS',
+                                     'metadata': {'name': 'test-cp',
+                                                  'annotations': {'crossplane.io/composition-resource-name': 'eks-cluster'}},
+                                     'status': {'eks': {'clusterArn': 'arn:aws:eks:us-east-1:123456789012:cluster/test-cp-abc12345',
+                                                        'oidcIssuerUrl': 'https://oidc.eks.us-east-1.amazonaws.com/id/ABC123XYZ'}}},
+                                    {'apiVersion': 'helm.m.crossplane.io/v1beta1',
+                                     'kind': 'Release',
+                                     'metadata': {'name': 'test-cp-uxp',
+                                                  'annotations': {'crossplane.io/composition-resource-name': 'uxp-release'}},
+                                     'status': {'atProvider': {'state': 'deployed'}}}],
+              'assertResources': [{'apiVersion': 'iam.aws.m.upbound.io/v1beta1',
+                                   'kind': 'OpenIDConnectProvider',
+                                   'metadata': {'name': 'test-cp-oidc',
+                                                'annotations': {'crossplane.io/external-name': 'arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/ABC123XYZ'}}},
+                                  {'apiVersion': 'iam.aws.m.upbound.io/v1beta1',
+                                   'kind': 'RolePolicyAttachment',
+                                   'metadata': {'name': 'test-cp-backup-attach',
+                                                'annotations': {'crossplane.io/external-name': 'test-cp-backup-irsa/arn:aws:iam::123456789012:policy/test-cp-backup-s3'}}}]}},
 ]
