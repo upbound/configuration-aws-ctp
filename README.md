@@ -171,3 +171,12 @@ up test run tests/* --e2e
 ```
 
 In CI, e2e runs only on pull requests labeled `run-e2e-tests` (see `.github/workflows/e2e.yaml`).
+
+## Managed Resource Activation Policy
+
+This configuration includes a `ManagedResourceActivationPolicy` (MRAP) that enables only the required CRDs from dependent providers. If you're running Crossplane without a default activation policy, this ensures that only the necessary CRDs are activated, reducing resource overhead and improving control plane performance.
+
+To view the MRAP:
+```bash
+kubectl get managedresourceactivationpolicy configuration-aws-ctp -o yaml
+```

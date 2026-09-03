@@ -1,0 +1,15 @@
+apiVersion: apiextensions.crossplane.io/v1alpha1
+kind: ManagedResourceActivationPolicy
+metadata:
+  name: configuration-aws-ctp
+spec:
+  activate:
+  - buckets.s3.aws.m.upbound.io
+  - eips.ec2.aws.m.upbound.io
+  - objects.kubernetes.m.crossplane.io
+  - openidconnectproviders.iam.aws.m.upbound.io
+  - podidentityassociations.eks.aws.m.upbound.io
+  - policies.iam.aws.m.upbound.io
+  - releases.helm.m.crossplane.io
+  - rolepolicyattachments.iam.aws.m.upbound.io
+  - roles.iam.aws.m.upbound.io
