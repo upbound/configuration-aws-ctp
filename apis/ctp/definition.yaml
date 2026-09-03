@@ -330,6 +330,38 @@ spec:
                     - Generated
                     - Deterministic
                     default: Generated
+                  adopt:
+                    type: object
+                    description: >-
+                      Adoption settings, used only by the
+                      controlplane-adopt.aws.platform.upbound.io Composition. AWS
+                      assigns most resource identifiers, so the adopt path
+                      discovers existing resources by tag and injects
+                      crossplane.io/external-name before Crossplane reconciles.
+                      Ignored by the default Composition.
+                    properties:
+                      tagFilters:
+                        type: array
+                        description: >-
+                          Tag filters passed to function-aws-query's GetResources
+                          call as filtersRef. Normally a single entry selecting
+                          this control plane's identity tag, e.g.
+                          [{name: "upbound.io/ctp-id", values: ["awsctpcp1"]}].
+                          It duplicates `id` on purpose: function-aws-query
+                          resolves filtersRef from a field path and cannot
+                          template a scalar into a {name, values} list.
+                        items:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                            values:
+                              type: array
+                              items:
+                                type: string
+                          required:
+                          - name
+                          - values
                 required:
                 - id
                 - region
