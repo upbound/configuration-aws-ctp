@@ -101,7 +101,8 @@ spec:
 | `k8gb` | no | Enable k8gb global failover — see below. |
 | `argocd` | no | Enable ArgoCD (GitOps app-of-apps) — see below. |
 | `providerVerticalPodAutoscaling` | no | Enable VPA for UXP providers (CPU/memory bounds). |
-| `managementPolicies` | no | Crossplane management policies (default `["*"]`). |
+| `managementPolicies` | no | Crossplane management policies. No schema default: when set it wins over `managementMode`. |
+| `managementMode` | no | Lifecycle: `Full` (default, standard), `Provision` (create/adopt/update, never delete), `ObserveOnly` (watch only), `Deprovision` (adopt and delete). See below. |
 
 > **cert-manager** is installed unconditionally on every control plane (a free
 > dependency of Knative/k8gb/ArgoCD Gateway TLS). **Envoy Gateway (Gateway API)**
@@ -180,3 +181,29 @@ To view the MRAP:
 ```bash
 kubectl get managedresourceactivationpolicy configuration-aws-ctp -o yaml
 ```
+
+## Dynamic control-plane provisioning
+
+`controlplanes/*.yaml` declares persistent EKS+UXP control planes as
+`ControlPlane` XRs. `.github/workflows/provision.yaml` (manual dispatch) stands
+up a disposable local KIND bootstrap and reconciles or decommissions them
+according to each file's `managementMode`. See `controlplanes/README.md`.
+
+Two layers are involved and must not be conflated:
+
+| Layer | What it is | Lifecycle |
+|---|---|---|
+| Management (bootstrap) | Local KIND + UXP running this package | Ephemeral: created and destroyed each run |
+| Provisioned (product) | The EKS cluster with UXP + add-ons installed on it | Persistent: created once, adopted and updated thereafter |
+
+### Adoption on AWS
+
+On Azure a stateless bootstrap re-adopts by deterministic name. AWS assigns most
+resource identifiers itself, so adoption has to be manufactured: every AWS
+resource this configuration owns is tagged `upbound.io/ctp-id: <id>` and
+`upbound.io/ctp-resource: <logical name>`, and the adopt path queries those tags
+to inject `crossplane.io/external-name` before Crossplane reconciles.
+
+**A resource provisioned without those tags is not adoptable.** Tag before you
+provision anything you intend to keep. See
+`docs/superpowers/specs/2026-09-01-aws-ctp-dynamic-provisioning-design.md`.
