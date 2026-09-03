@@ -266,6 +266,21 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
         add_runtime_config(rsp, id_val, vpa, knative, vpa_ready,
                            knative_fully_ready, config)
 
+    # --- Comprehensive orphan policy ---
+    # Every composed managed resource (helm Release, provider-kubernetes Object,
+    # and AWS MRs all carry spec.forProvider) inherits mgmt_policies, so
+    # Provision/ObserveOnly never delete the provisioned control plane on
+    # teardown. Resources with an explicit policy (backup bucket, k8gb CoreDNS
+    # observe, knative serving) and composed XRs / Usage guards (no forProvider)
+    # are left untouched.
+    for _name in list(rsp.desired.resources.keys()):
+        _res = resource.struct_to_dict(rsp.desired.resources[_name].resource)
+        _spec = _res.get("spec", {})
+        if "forProvider" not in _spec or "managementPolicies" in _spec:
+            continue
+        _res["spec"]["managementPolicies"] = mgmt_policies
+        resource.update(rsp.desired.resources[_name], _res)
+
     update_status(rsp, id_val, params, uxp_version, uxp_deployed, backup,
                   role_arn, bucket_name, observed_resources, nodes,
                   ng_actual_type, ng_type_mismatch, vpa, knative,
