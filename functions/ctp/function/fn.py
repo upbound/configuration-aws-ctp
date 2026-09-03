@@ -69,6 +69,20 @@ from .uxp import add_uxp_release
 from .vpa import add_vpa_resources
 
 
+# managementMode -> Crossplane managementPolicies. Provision and ObserveOnly
+# never include Delete, so the provisioned control plane is orphaned (never torn
+# down) when the XR is removed. Full (default) is the standard "*" lifecycle.
+# Deprovision is the pipeline's decommission signal: adopt (Observe/Create) and
+# Delete, but no Update/LateInitialize - a drifted or broken cluster must not have
+# changes pushed to it on the way out, only be torn down.
+_MODE_POLICIES = {
+    "Provision": ["Observe", "Create", "Update", "LateInitialize"],
+    "ObserveOnly": ["Observe"],
+    "Full": ["*"],
+    "Deprovision": ["Create", "Delete", "Observe"],
+}
+
+
 def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     """Main composition function entry point."""
     # Capture the reconciliation timestamp once and thread it through every
@@ -105,7 +119,11 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     backup = params.get("backup", {"enabled": "no"})
     install_from = backup.get("installFrom")
     license_param = params.get("license")
-    mgmt_policies = params.get("managementPolicies", ["*"])
+    # managementPolicies is published API and stays the escape hatch: when set
+    # explicitly it wins, otherwise managementMode supplies the policy array.
+    management_mode = params.get("managementMode", "Full")
+    mgmt_policies = params.get("managementPolicies") or _MODE_POLICIES.get(
+        management_mode, _MODE_POLICIES["Full"])
     uxp_version = params.get("uxp", {}).get("version", "2.2.1-up.1")
     vpa = params.get("providerVerticalPodAutoscaling")
     knative = params.get("knative")
