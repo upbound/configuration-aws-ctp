@@ -80,7 +80,14 @@ if creds and controlplanes:
             metadata=k8s.ObjectMeta(name="decommission" if DECOMMISSION else "reconcile"),
             spec=e2etest.Spec(
                 crossplane=e2etest.Crossplane(
-                    autoUpgrade=e2etest.AutoUpgrade(channel="Stable"),
+                    # Pinned, not Stable: upbound.yaml declares an apiDependency on
+                    # the ManagedResourceActivationPolicy CRD from Crossplane v2.1.4
+                    # (inherited via configuration-aws-eks -> -aws-network). A channel
+                    # that resolves below that never gets the CRD, so the package never
+                    # goes Healthy and up test fails with "failed to install package:
+                    # context deadline exceeded" before applying any manifest.
+                    autoUpgrade=e2etest.AutoUpgrade(channel="None"),
+                    version="2.1.4-up.2",
                 ),
                 defaultConditions=["Ready"],
                 manifests=manifests,
