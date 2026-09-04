@@ -18,9 +18,52 @@ Three identifiers need no query at all:
   Route                  {route-table-id}_0.0.0.0/0        (upjet route() GetIDFn)
   OpenIDConnectProvider  arn:aws:iam::{acct}:oidc-provider/{oidc-host}
   RolePolicyAttachment   {role-name}/{policy-arn}
+
+A fourth cannot be queried at all: SecurityGroupRule's external-name is a
+Terraform-computed crc32 of the rule signature, so it is computed here from the
+tag-discovered security group id (see sgrule_external_name).
 """
 
+import zlib
+
 from crossplane.function import resource
+
+
+# The two database ingress rules configuration-aws-network composes, keyed by
+# their krm.kcl.dev/composition-resource-name. Mirrored from its
+# functions/network/main.k - if upstream changes a port, protocol or CIDR the
+# derived hash below stops matching. That failure is loud, not silent: Crossplane
+# attempts a create and AWS returns InvalidPermission.Duplicate.
+_LEGACY_SG_RULES = {
+    "sgr-postgres": (5432, 5432, "tcp", "ingress", ["0.0.0.0/0"]),
+    "sgr-mysql": (3306, 3306, "tcp", "ingress", ["0.0.0.0/0"]),
+}
+
+
+def sgrule_external_name(sg_id: str, from_port: int, to_port: int,
+                         protocol: str, rule_type: str,
+                         cidrs: list) -> str:
+    """Terraform's aws_security_group_rule id: a crc32 of the rule signature.
+
+    Mirrors securityGroupRuleCreateID in terraform-provider-aws
+    internal/service/ec2/vpc_security_group_rule.go, hashed with StringHashcode
+    from internal/create/hashcode.go. No AWS API exposes this value - it is a
+    Terraform state key, not an AWS identifier - so it is computed rather than
+    discovered. A port is written into the buffer only when greater than zero,
+    matching upstream's two conditionals.
+
+    Verified exactly against a live probe: sg-0ecce795575a1aef7 / 5432 / tcp /
+    ingress / 0.0.0.0/0 -> sgrule-2141789600.
+    """
+    buf = f"{sg_id}-"
+    if from_port > 0:
+        buf += f"{from_port}-"
+    if to_port > 0:
+        buf += f"{to_port}-"
+    buf += f"{protocol}-{rule_type}-"
+    for cidr in sorted(cidrs):
+        buf += f"{cidr}-"
+    return f"sgrule-{zlib.crc32(buf.encode()) & 0xffffffff}"
 
 
 def arn_identifier(arn: str) -> str:
@@ -100,6 +143,15 @@ def build_external_names(adopt_ctx: dict, id_val: str, cluster_name: str,
     # IRSA. The upside is nil, because the default path never adopts.
     if not adopt_ctx:
         return {k: v for k, v in names.items() if v}
+
+    # Derived: the security group's own id is discovered by tag above; the two
+    # legacy rule hashes derive from it plus upstream's fixed rule signatures.
+    # No-op when the tag sweep found no unambiguous security group.
+    sg_id = names.get("sg")
+    if sg_id:
+        for logical, (fp, tp, proto, rtype, cidrs) in _LEGACY_SG_RULES.items():
+            names[logical] = sgrule_external_name(
+                sg_id, fp, tp, proto, rtype, cidrs)
 
     # Derived: the OIDC provider's Terraform ID is its ARN, which fn.py already
     # computes from the cluster's OIDC issuer host and the account ID.

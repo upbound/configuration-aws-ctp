@@ -1579,4 +1579,36 @@ CASES = [
                                    'kind': 'EKS',
                                    'metadata': {'name': 'test-cp'},
                                    'spec': {'parameters': {'externalNames': {'ebsCSIDriverPodIdentityAssociation': 'a-abcdefghij1234567'}}}}]}},
+    # The two database SecurityGroupRules carry a Terraform-computed crc32 hash as
+    # their external-name, so the adopt path derives it from the tag-discovered
+    # security group id rather than querying for it - no AWS API exposes it.
+    # Asserted on the Network sub-XR because configuration-aws-network composes
+    # those rules, not this repo. Rendered against the default Composition for the
+    # same reason as adopt-injects-eip-external-name above.
+    {'name': 'adopt-derives-security-group-rule-hash',
+     'spec': {'compositionPath': 'apis/ctp/composition.yaml',
+              'xrdPath': 'apis/ctp/definition.yaml',
+              'validate': True,
+              'timeoutSeconds': 60,
+              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:609897127049:security-group/sg-0ecce795575a1aef7',
+                                                'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                         'upbound.io/ctp-resource': 'sg'}}],
+                                    'assoc': [],
+                                    'pia': []}},
+              'xr': {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                     'kind': 'ControlPlane',
+                     'metadata': {'name': 'test-cp'},
+                     'spec': {'parameters': {'id': 'test-cp',
+                                             'region': 'us-east-1',
+                                             'version': '1.34',
+                                             'managementMode': 'Provision',
+                                             'nodes': {'count': 2,
+                                                       'instanceType': 't3.small'}}}},
+              # sgrule-2141789600 is a value observed on real AWS for this exact
+              # rule signature, not one this code generated.
+              'assertResources': [{'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                                   'kind': 'Network',
+                                   'metadata': {'name': 'test-cp'},
+                                   'spec': {'parameters': {'externalNames': {'sg': 'sg-0ecce795575a1aef7',
+                                                                             'sgr-postgres': 'sgrule-2141789600'}}}}]}},
 ]
