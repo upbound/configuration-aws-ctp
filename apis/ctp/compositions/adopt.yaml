@@ -59,41 +59,22 @@ spec:
         namespace: default
         name: aws-creds
 
-  # Subnet-to-route-table associations are not taggable and have no ARN, so they
-  # come from Cloud Control. hydrate stays on: the ctp step matches on the
-  # SubnetId/RouteTableId properties.
-  - functionRef:
-      name: upbound-function-aws-query
-    step: discover-assoc
-    input:
-      apiVersion: aws.fn.crossplane.io/v1beta1
-      kind: Input
-      queryType: ListResources
-      regionRef: spec.parameters.region
-      parameters:
-        typeName: "AWS::EC2::SubnetRouteTableAssociation"
-      target: context.adopt.assoc
-    credentials:
-    - name: aws-creds
-      source: Secret
-      secretRef:
-        namespace: default
-        name: aws-creds
-
-  # discover-pia REMOVED. Settled empirically on 2026-09-04: the Resource Groups
-  # Tagging API does index eks:podidentityassociation (a live query returned 25
-  # entries), so Pod Identity associations arrive in the discover-tagged sweep
-  # above and need no Cloud Control call. eks:podidentityassociation is included
-  # in its resourceTypeFilters.
+  # discover-assoc REMOVED. AWS::EC2::SubnetRouteTableAssociation cannot be
+  # listed safely in a shared account. ListResources enumerates EVERY
+  # association in the account and hydration calls GetResource on each one, so a
+  # single foreign or main-route-table association aborts the whole composition -
+  # function-aws-query returns a FATAL result on any error:
+  #   InvalidRequestException: AWS::EC2::SubnetRouteTableAssociation Handler
+  #   returned status FAILED: The RouteTableAssociation does not belong to a subnet
+  # hydrate=false would avoid the GetResource calls but returns identifiers only,
+  # with no SubnetId/RouteTableId to map an association to its logical name, so it
+  # buys nothing.
   #
-  # The Cloud Control route was also actively harmful here. AWS::EKS::PodIdentity
-  # Association requires a resourceModel carrying ClusterName, which a static
-  # Composition cannot template, and function-aws-query returns a FATAL result on
-  # a rejected query - so the placeholder aborted the entire composition and no
-  # resource was created at all:
-  #   InvalidRequestException: AWS::EKS::PodIdentityAssociation Handler returned
-  #   status FAILED: The parameter name contains invalid characters
-  # Do not reintroduce a query whose input cannot be templated.
+  # Consequence: RouteTableAssociations are not adopted and will duplicate. That
+  # fails loudly rather than silently - AWS rejects associating an already
+  # associated subnet. Closing this needs an authoritative ec2:DescribeRouteTables
+  # query (see the DescribeEc2 extension in the plan), which reads only the
+  # route tables of this VPC instead of everything in the account.
 
   - functionRef:
       name: upbound-configuration-aws-ctpctp
