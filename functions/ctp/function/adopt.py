@@ -87,6 +87,20 @@ def build_external_names(adopt_ctx: dict, id_val: str, cluster_name: str,
         if len(candidates) == 1:
             names[logical] = candidates[0]
 
+    # The derived entries below are gated on adopt_ctx, i.e. on the adopt
+    # Composition having run its discovery steps. They need no query - they are
+    # computed from the account id and the cluster's OIDC host - so it is
+    # tempting to emit them unconditionally. Do not.
+    #
+    # On the default Composition adopt_ctx is {} and nothing must be injected:
+    # every existing consumer would otherwise gain a crossplane.io/external-name
+    # on its OpenIDConnectProvider and RolePolicyAttachment where it previously
+    # had none. If either derivation is off by a character, that consumer
+    # observes nothing and creates a duplicate - a second OIDC provider breaks
+    # IRSA. The upside is nil, because the default path never adopts.
+    if not adopt_ctx:
+        return {k: v for k, v in names.items() if v}
+
     # Derived: the OIDC provider's Terraform ID is its ARN, which fn.py already
     # computes from the cluster's OIDC issuer host and the account ID.
     if account_id and oidc_host:

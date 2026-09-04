@@ -1503,6 +1503,13 @@ CASES = [
               'xrdPath': 'apis/ctp/definition.yaml',
               'validate': True,
               'timeoutSeconds': 60,
+              # An adopt context with empty query results: the dict is truthy so
+              # build_external_names proceeds to its derived entries, but supplies
+              # no tag-discovered ones. That isolates the derivation. The context
+              # is required - the derived entries are gated on adopt_ctx so the
+              # default Composition injects nothing, and without it this renders
+              # exactly as an ordinary control plane does.
+              'context': {'adopt': {'tagged': [], 'assoc': [], 'pia': []}},
               'xr': {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
                      'kind': 'ControlPlane',
                      'metadata': {'name': 'test-cp'},
