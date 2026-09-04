@@ -35,7 +35,12 @@ from crossplane.function import logging, resource, response
 from crossplane.function.proto.v1 import run_function_pb2 as fnv1
 from crossplane.function.proto.v1 import run_function_pb2_grpc as grpcv1
 
-from .adopt import apply_external_names, build_external_names
+from .adopt import (
+    apply_external_names,
+    build_external_names,
+    eks_external_names,
+    network_external_names,
+)
 from .argo import add_argocd_resources
 from .backup import add_backup_resources
 from .certmanager import add_certmanager_resources
@@ -220,10 +225,12 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
 
     # --- Compose resources ---
     add_network_resource(rsp, id_val, region, provider_config, mgmt_policies,
-                         network_param, config, external_names=external_names)
+                         network_param, config,
+                         external_names=network_external_names(external_names))
     add_eks_resource(rsp, id_val, region, provider_config, version, nodes,
                      access_config, mgmt_policies, iam_param, config,
-                     naming=naming, external_names=external_names)
+                     naming=naming,
+                     external_names=eks_external_names(external_names))
     add_uxp_release(rsp, id_val, uxp_version, uxp_deployed, mgr_args, config)
     add_usage_resources(rsp, id_val, config, k8gb_enabled=k8gb_enabled,
                         argocd_enabled=argocd_enabled,

@@ -1549,9 +1549,17 @@ CASES = [
               'xrdPath': 'apis/ctp/definition.yaml',
               'validate': True,
               'timeoutSeconds': 60,
+              # One network key and one EKS key, so the assertions below prove the
+              # map is SPLIT per sub-XR rather than forwarded whole. Each
+              # sub-configuration validates the keys it receives and aborts its
+              # own composition on an unknown one, so sending the combined map
+              # breaks both of them.
               'context': {'adopt': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:vpc/vpc-0abc',
                                                 'tags': {'upbound.io/ctp-id': 'test-cp',
-                                                         'upbound.io/ctp-resource': 'vpc'}}],
+                                                         'upbound.io/ctp-resource': 'vpc'}},
+                                               {'arn': 'arn:aws:eks:us-east-1:123456789012:podidentityassociation/test-cp-eks/a-abcdefghij1234567',
+                                                'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                         'upbound.io/ctp-resource': 'ebsCSIDriverPodIdentityAssociation'}}],
                                     'assoc': [],
                                     'pia': []}},
               'xr': {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
@@ -1570,5 +1578,5 @@ CASES = [
                                   {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
                                    'kind': 'EKS',
                                    'metadata': {'name': 'test-cp'},
-                                   'spec': {'parameters': {'externalNames': {'vpc': 'vpc-0abc'}}}}]}},
+                                   'spec': {'parameters': {'externalNames': {'ebsCSIDriverPodIdentityAssociation': 'a-abcdefghij1234567'}}}}]}},
 ]

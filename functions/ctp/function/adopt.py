@@ -135,6 +135,46 @@ def build_external_names(adopt_ctx: dict, id_val: str, cluster_name: str,
     return {k: v for k, v in names.items() if v}
 
 
+# Each sub-configuration validates the keys it is handed and rejects unknown
+# ones outright (configuration-aws-network and -aws-eks both assert on this), so
+# the combined map must be split before it is forwarded. Sending the whole thing
+# aborts the sub-XR's composition:
+#   pipeline step "eks" returned a fatal result: EvaluationError
+#   assert len(_unknownExternalNames) == 0
+# Keys not listed here belong to resources this configuration composes itself and
+# are applied locally by apply_external_names, never forwarded.
+_NETWORK_KEYS = frozenset({
+    "vpc", "igw", "rt", "route", "mrt", "sg", "sgr-postgres", "sgr-mysql",
+})
+_EKS_KEYS = frozenset({
+    "controlplaneRole", "kubernetesCluster", "clusterSecurityGroupImport",
+    "kubernetesClusterAuth", "nodegroupRole", "nodeGroupPublic",
+    "vpc-cni-addon", "ebsCSIDriverRole", "ebsCSIDriverPodIdentityAssociation",
+    "aws-ebs-csi-driver-addon", "eks-pod-identity-agent-addon",
+    "providerConfig-kubernetes", "providerConfig-helm",
+})
+
+
+def network_external_names(external_names: dict) -> dict:
+    """The subset configuration-aws-network composes. Subnet and route-table
+    association names are derived from the caller's own subnet list, so they are
+    matched by prefix rather than enumerated."""
+    return {
+        k: v for k, v in (external_names or {}).items()
+        if k in _NETWORK_KEYS or k.startswith("subnet-") or k.startswith("rta-")
+    }
+
+
+def eks_external_names(external_names: dict) -> dict:
+    """The subset configuration-aws-eks composes. The AccessEntry and
+    AccessPolicyAssociation names are sha256 digests, so anything not otherwise
+    recognised and not a network key is passed through for it to validate."""
+    return {
+        k: v for k, v in (external_names or {}).items()
+        if k in _EKS_KEYS
+    }
+
+
 def apply_external_names(rsp, external_names: dict) -> None:
     """Stamp crossplane.io/external-name on every desired resource whose
     composition-resource-name appears in the map.
