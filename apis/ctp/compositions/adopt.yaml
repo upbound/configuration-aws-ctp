@@ -50,7 +50,7 @@ spec:
       regionRef: spec.parameters.region
       filtersRef: spec.parameters.adopt.tagFilters
       parameters:
-        resourceTypeFilters: "ec2:vpc,ec2:subnet,ec2:internet-gateway,ec2:route-table,ec2:security-group,ec2:elastic-ip"
+        resourceTypeFilters: "ec2:vpc,ec2:subnet,ec2:internet-gateway,ec2:route-table,ec2:security-group,ec2:elastic-ip,eks:podidentityassociation"
       target: context.adopt.tagged
     credentials:
     - name: aws-creds
@@ -80,56 +80,20 @@ spec:
         namespace: default
         name: aws-creds
 
-  # CONDITIONAL - decide with the one command below before adding this step.
+  # discover-pia REMOVED. Settled empirically on 2026-09-04: the Resource Groups
+  # Tagging API does index eks:podidentityassociation (a live query returned 25
+  # entries), so Pod Identity associations arrive in the discover-tagged sweep
+  # above and need no Cloud Control call. eks:podidentityassociation is included
+  # in its resourceTypeFilters.
   #
-  # Pod Identity associations are IdentifierFromProvider (the association_id,
-  # format "a-" + 17 lowercase alphanumerics). Two possible sources:
-  #
-  #   Route 1, preferred: the discover-tagged sweep above. The type IS taggable
-  #   (verified: PodIdentityAssociationSpecForProvider declares tags, and
-  #   configuration-aws-eks stamps the identity tags on it), so IF the Resource
-  #   Groups Tagging API indexes it, just add eks:podidentityassociation to that
-  #   step's resourceTypeFilters and delete this step. One call, no ordering
-  #   problem. Being taggable does NOT guarantee the Tagging API indexes it -
-  #   that is the thing to check.
-  #
-  #   Route 2, this step: Cloud Control. Verified 2026-09-01 to require a
-  #   resourceModel carrying ClusterName; a bare call is rejected with
-  #     InvalidRequestException: Missing or invalid ResourceModel property in
-  #     AWS::EKS::PodIdentityAssociation list handler request input.
-  #     Required property: (#: required key [ClusterName] not found)
-  #   With naming: Deterministic the cluster is {id}-eks, so ClusterName is
-  #   computable from the XR alone - no status field and no second reconcile.
-  #
-  # Decide with:
-  #   aws resourcegroupstaggingapi get-resources --region <region> \
-  #     --resource-type-filters eks:podidentityassociation
-  # An empty ResourceTagMappingList means Route 1 works: drop this step. An error
-  # naming valid resource types means Route 1 does not: keep this step.
-  #
-  # Keeping both is also acceptable - build_external_names takes the PIA from
-  # whichever source supplies it (Task 8), so a redundant step costs one AWS call
-  # and nothing else. If unadopted the failure is loud, not silent: AWS rejects a
-  # duplicate association for the same cluster/namespace/serviceAccount.
-  - functionRef:
-      name: upbound-function-aws-query
-    step: discover-pia
-    input:
-      apiVersion: aws.fn.crossplane.io/v1beta1
-      kind: Input
-      queryType: ListResources
-      regionRef: spec.parameters.region
-      parameters:
-        typeName: "AWS::EKS::PodIdentityAssociation"
-        # Deterministic naming makes this computable; see Task 12 upstream.
-        resourceModel: '{"ClusterName": "<id>-eks"}'
-      target: context.adopt.pia
-    credentials:
-    - name: aws-creds
-      source: Secret
-      secretRef:
-        namespace: default
-        name: aws-creds
+  # The Cloud Control route was also actively harmful here. AWS::EKS::PodIdentity
+  # Association requires a resourceModel carrying ClusterName, which a static
+  # Composition cannot template, and function-aws-query returns a FATAL result on
+  # a rejected query - so the placeholder aborted the entire composition and no
+  # resource was created at all:
+  #   InvalidRequestException: AWS::EKS::PodIdentityAssociation Handler returned
+  #   status FAILED: The parameter name contains invalid characters
+  # Do not reintroduce a query whose input cannot be templated.
 
   - functionRef:
       name: upbound-configuration-aws-ctpctp
