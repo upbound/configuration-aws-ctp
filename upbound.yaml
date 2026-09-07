@@ -23,7 +23,7 @@ spec:
   - apiVersion: pkg.crossplane.io/v1
     kind: Function
     package: xpkg.upbound.io/upbound/function-aws-query
-    version: v0.1.0
+    version: v0.2.0
   - apiVersion: pkg.crossplane.io/v1
     kind: Provider
     package: xpkg.upbound.io/upbound/provider-aws-s3
