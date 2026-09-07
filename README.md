@@ -214,7 +214,7 @@ Discovery uses two sources, because the tag query alone is not sufficient:
 | Source | Finds | Why both |
 |---|---|---|
 | Resource Groups Tagging API (`adopt.tagFilters`) | Every taggable resource in one server-side call | Broad, but it keeps returning deleted resources under the same tag, which makes a logical name ambiguous |
-| `ec2:DescribeSubnets` / `ec2:DescribeRouteTables` (`adopt.ec2Filters`) | Live subnets, and route-table associations | Returns only live resources, so it settles that ambiguity; associations carry no tags and the Tagging API does not index them at all |
+| `DescribeSubnets` / `DescribeRouteTables` (`adopt.ec2Filters`) | Live subnets, and route-table associations | Returns only live resources, so it settles that ambiguity; associations carry no tags and the Tagging API does not index them at all |
 
 Ambiguity is never guessed: where a logical name still has more than one
 candidate, nothing is injected and Crossplane creates instead. A duplicate is

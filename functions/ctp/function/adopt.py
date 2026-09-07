@@ -23,7 +23,11 @@ apply_external_names stamps it onto the desired resources. Crossplane then
 observes the existing AWS object instead of creating a duplicate.
 
 Three identifiers need no query at all:
-  Route                  {route-table-id}_0.0.0.0/0        (upjet route() GetIDFn)
+  Route                  r-{route-table-id}{hashcode(destination)}, the form
+                         upjet assigns on create. The provider canonicalises the
+                         annotation to {route-table-id}_{destination} once it has
+                         observed the route; both forms are accepted for
+                         adoption (measured on real AWS, 2026-09-07).
   OpenIDConnectProvider  arn:aws:iam::{acct}:oidc-provider/{oidc-host}
   RolePolicyAttachment   {role-name}/{policy-arn}
 
@@ -46,6 +50,36 @@ _LEGACY_SG_RULES = {
     "sgr-postgres": (5432, 5432, "tcp", "ingress", ["0.0.0.0/0"]),
     "sgr-mysql": (3306, 3306, "tcp", "ingress", ["0.0.0.0/0"]),
 }
+
+
+# The single default route configuration-aws-network composes, mirrored from its
+# functions/network/main.k:228 - see the _LEGACY_SG_RULES note above, the same
+# cross-repo coupling applies.
+_ROUTE_DESTINATION = "0.0.0.0/0"
+
+
+def _string_hashcode(s: str) -> int:
+    """Terraform's create.StringHashcode: the unsigned crc32, unmodified.
+
+    Upstream reads as though it wraps to a signed int:
+
+        v := int(crc32.ChecksumIEEE([]byte(s)))
+        if v >= 0 { return v }
+        if -v >= 0 { return -v }
+
+    It does not. Go's `int` is 64-bit on every platform this runs on, so a
+    uint32 up to 4294967295 is always positive and returned as-is; the negative
+    branches are dead code left over from 32-bit builds. Do not "fix" this to
+    wrap at 2^31 - that was tried, and measured wrong against live AWS
+    2026-09-07: real rules came back as sgrule-3302807844 and sgrule-2392464648,
+    both above 2^31, where a wrapped implementation gives 992159452 and
+    1902502648.
+
+    Verified on both sides of the 2^31 boundary against values upjet itself
+    created: sgrule-2134617159 / sgrule-897411179 / r-rtb-...1080289494 below,
+    sgrule-3302807844 / sgrule-2392464648 above.
+    """
+    return zlib.crc32(s.encode()) & 0xffffffff
 
 
 def sgrule_external_name(sg_id: str, from_port: int, to_port: int,
@@ -71,7 +105,7 @@ def sgrule_external_name(sg_id: str, from_port: int, to_port: int,
     buf += f"{protocol}-{rule_type}-"
     for cidr in sorted(cidrs):
         buf += f"{cidr}-"
-    return f"sgrule-{zlib.crc32(buf.encode()) & 0xffffffff}"
+    return f"sgrule-{_string_hashcode(buf)}"
 
 
 def arn_identifier(arn: str) -> str:
@@ -114,7 +148,7 @@ def _by_resource_tag(tagged: list) -> dict:
 
 
 def _live_by_resource_tag(entries: list, id_field: str, ctp_id: str) -> dict:
-    """Index a DescribeEc2 result by its upbound.io/ctp-resource tag.
+    """Index a direct EC2 describe result by its upbound.io/ctp-resource tag.
 
     Scoped to this control plane's identity tag. The describe is already filtered
     server-side by spec.parameters.adopt.ec2Filters, but that filter is
@@ -155,6 +189,7 @@ def _association_external_names(route_tables: list, subnets: dict) -> dict:
     by_subnet_id = {v: k for k, v in (subnets or {}).items()}
     out = {}
     for rt in route_tables or []:
+        rt_logical = (rt.get("tags") or {}).get("upbound.io/ctp-resource")
         for assoc in rt.get("associations") or []:
             # An association mid-transition or already gone must not be adopted.
             # An empty state is accepted: AssociationState is absent on older
@@ -169,12 +204,15 @@ def _association_external_names(route_tables: list, subnets: dict) -> dict:
             # deletes by calling ReplaceRouteTableAssociation to restore
             # original_route_table_id - a create-time-only field that AWS never
             # returns, so adoption cannot populate it and LateInitialize cannot
-            # recover it. An adopted `mrt` then fails to delete with
+            # recover it. Measured on real AWS 2026-09-07: an adopted `mrt` fails
+            # to delete with
             #   ReplaceRouteTableAssociation ... MissingParameter: The request
             #   must contain the parameter routeTableId
-            # and its finalizer blocks the route table and the VPC. Left
-            # unadopted, Crossplane re-issues the association and records an
-            # original it can restore, so the MR deletes cleanly.
+            # and its finalizer then blocks the route table and the VPC, needing
+            # manual repair. Leaving it unadopted lets Crossplane re-issue the
+            # association, which records an original it can restore, so the MR at
+            # least deletes cleanly. See the Deprovision caveat in
+            # controlplanes/README.md.
             if assoc.get("main"):
                 continue
             subnet_logical = by_subnet_id.get(assoc.get("subnetId"))
@@ -241,6 +279,19 @@ def build_external_names(adopt_ctx: dict, id_val: str, cluster_name: str,
         for logical, (fp, tp, proto, rtype, cidrs) in _LEGACY_SG_RULES.items():
             names[logical] = sgrule_external_name(
                 sg_id, fp, tp, proto, rtype, cidrs)
+
+    # Derived: a Route's external name, built from the tag-discovered route
+    # table. Nothing can discover it - routes are not taggable and no AWS API
+    # returns this identifier - so without this the adopt path re-creates the
+    # default route, AWS rejects it with RouteAlreadyExists, and the XR never
+    # reaches Ready. Verified adopting a live route on real AWS 2026-09-07:
+    # this value observes the existing route, after which the provider rewrites
+    # the annotation to its canonical {rt}_{destination} form. That rewrite is
+    # a one-off - apply_external_names never overwrites an annotation that is
+    # already set - so it does not flap.
+    rt_id = names.get("rt")
+    if rt_id:
+        names["route"] = f"r-{rt_id}{_string_hashcode(_ROUTE_DESTINATION)}"
 
     # Derived: the OIDC provider's Terraform ID is its ARN, which fn.py already
     # computes from the cluster's OIDC issuer host and the account ID.

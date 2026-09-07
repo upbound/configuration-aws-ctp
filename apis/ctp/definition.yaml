@@ -365,17 +365,18 @@ spec:
                       ec2Filters:
                         type: array
                         description: >-
-                          Filters passed to function-aws-query's DescribeEc2
-                          calls as filtersRef. These take native EC2 filter
-                          names, so a tag filter needs the "tag:" prefix the
-                          Tagging API does not use, e.g.
+                          Filters passed to function-aws-query's
+                          DescribeSubnets and DescribeRouteTables calls as
+                          filtersRef. These take native EC2 filter names, so a
+                          tag filter needs the "tag:" prefix the Tagging API
+                          does not use, e.g.
                           [{name: "tag:upbound.io/ctp-id", values: ["awsctpcp1"]}].
                           It duplicates `id` for the same reason tagFilters
-                          does. Set it: an empty list makes DescribeSubnets and
-                          DescribeRouteTables region-wide, which is slow and
-                          returns every other control plane's resources. Those
-                          are discarded (the composition re-checks the identity
-                          tag client-side) but nothing else scopes the call.
+                          does. Required in practice: function-aws-query refuses
+                          an empty filter set rather than reading the whole
+                          region, so omitting this fails the adopt path loudly.
+                          An over-broad filter is safe - the composition
+                          re-checks the identity tag on every entry.
                         items:
                           type: object
                           properties:
@@ -388,6 +389,15 @@ spec:
                           required:
                           - name
                           - values
+                    # Required together, not individually optional. The two
+                    # queries are driven by different filter shapes and
+                    # function-aws-query refuses an empty filter set rather
+                    # than reading a whole region, so an adopt block carrying
+                    # only one of them fails at reconcile. Requiring both here
+                    # turns that into an admission-time rejection.
+                    required:
+                    - tagFilters
+                    - ec2Filters
                 required:
                 - id
                 - region

@@ -66,20 +66,19 @@ spec:
   #
   # Both are scoped by spec.parameters.adopt.ec2Filters, which takes native EC2
   # filter names - a tag filter is "tag:upbound.io/ctp-id", not the bare tag key
-  # tagFilters uses above. With no filter the calls go region-wide; that is
-  # merely wasteful rather than wrong, because build_external_names re-checks
-  # the identity tag on every entry.
+  # tagFilters uses above. function-aws-query rejects an empty filter set rather
+  # than reading the whole region, so a missing ec2Filters fails loudly here;
+  # build_external_names still re-checks the identity tag on every entry, so an
+  # over-broad filter cannot cross-adopt either.
   - functionRef:
       name: upbound-function-aws-query
     step: discover-subnets
     input:
       apiVersion: aws.fn.crossplane.io/v1beta1
       kind: Input
-      queryType: DescribeEc2
+      queryType: DescribeSubnets
       regionRef: spec.parameters.region
       filtersRef: spec.parameters.adopt.ec2Filters
-      parameters:
-        operation: Subnets
       target: context.adopt.subnets
     credentials:
     - name: aws-creds
@@ -98,11 +97,9 @@ spec:
     input:
       apiVersion: aws.fn.crossplane.io/v1beta1
       kind: Input
-      queryType: DescribeEc2
+      queryType: DescribeRouteTables
       regionRef: spec.parameters.region
       filtersRef: spec.parameters.adopt.ec2Filters
-      parameters:
-        operation: RouteTables
       target: context.adopt.routeTables
     credentials:
     - name: aws-creds
