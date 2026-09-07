@@ -43,14 +43,39 @@ On Azure every managed resource has a deterministic name and adoption is
 automatic. On AWS most identifiers are assigned by the cloud, so a fresh
 bootstrap cluster holds no way to find the resources it created last time.
 
-Until the adopt path lands (see
-`docs/superpowers/specs/2026-09-01-aws-ctp-dynamic-provisioning-design.md`),
-this folder supports:
+The adopt path closes this by tagging every owned resource with the control
+plane's identity and querying those tags to inject `crossplane.io/external-name`
+before Crossplane reconciles (see the "Adoption on AWS" section of the top-level
+README, and
+`docs/superpowers/specs/2026-09-01-aws-ctp-dynamic-provisioning-design.md`). It
+is **opt-in**: a control plane must select the adopt Composition and supply both
+filter lists.
+
+```yaml
+spec:
+  crossplane:
+    compositionRef:
+      name: controlplane-adopt.aws.platform.upbound.io
+  parameters:
+    adopt:
+      tagFilters:
+      - name: upbound.io/ctp-id
+        values: ["<id>"]
+      ec2Filters:
+      - name: tag:upbound.io/ctp-id
+        values: ["<id>"]
+```
+
+It also needs an `aws-creds` Secret in `default` - the query steps read
+credentials from a static block in the Composition, which is why they live in a
+separate Composition rather than behind a flag on the default one.
+
+Without that opt-in, this folder supports:
 
 - **create** - a control plane that does not exist yet, and
 - **same-run update** - changes applied while that run's bootstrap is alive.
 
-It does **not** support:
+and does **not** support:
 
 - **update across runs** - a second run creates a second, parallel stack rather
   than updating the first.
@@ -58,7 +83,16 @@ It does **not** support:
   wait for it, delete *that*, and report success, leaving the original running and
   orphaned.
 
-Treat a control plane provisioned before the adopt path lands as create-only.
+Treat a control plane provisioned without the identity tags as create-only:
+tagging is what makes it adoptable, and it cannot be applied retroactively by
+this configuration.
+
+> **Status.** Last measured full cycle adopted 23 of 31 resources with zero
+> duplicates. The 8 that did not were 3 private subnets, 3 route-table
+> associations and 2 security-group rules; the subnets and associations are what
+> the `ec2Filters` queries above address. That has passed composition tests but
+> has **not yet been re-run against real AWS**, so treat cross-run
+> `Provision`/`Deprovision` as unverified rather than working.
 
 ## Add a control plane
 

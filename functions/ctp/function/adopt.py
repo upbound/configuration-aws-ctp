@@ -3,11 +3,19 @@
 AWS assigns most resource identifiers, so a stateless bootstrap cluster holds no
 way to find the resources a previous run created. The adopt Composition
 (apis/ctp/compositions/adopt.yaml) runs function-aws-query ahead of this function
-and leaves three lists in the pipeline context:
+and leaves these lists in the pipeline context:
 
-  context.adopt.tagged  [{arn, tags}]                  Resource Groups Tagging API
-  context.adopt.assoc   [{identifier, properties}]     AWS::EC2::SubnetRouteTableAssociation
-  context.adopt.pia     [{identifier, properties}]     AWS::EKS::PodIdentityAssociation
+  context.adopt.tagged      [{arn, tags}]                Resource Groups Tagging API
+  context.adopt.pia         [{identifier, properties}]   AWS::EKS::PodIdentityAssociation
+  context.adopt.subnets     [{subnetId, tags, ...}]      ec2:DescribeSubnets
+  context.adopt.routeTables [{routeTableId, associations, tags, ...}]
+                                                         ec2:DescribeRouteTables
+
+The two EC2 describes exist because the Tagging API alone is not enough. It keeps
+returning deleted resources (see _by_resource_tag), which made every private
+subnet ambiguous and therefore unadoptable, and it does not index route-table
+associations at all. An EC2 describe returns only live resources, so it resolves
+both - it is the authoritative source and overrides the tag sweep.
 
 build_external_names turns them, plus the identifiers that are derivable without
 any query, into a {composition-resource-name: external-name} map.
@@ -105,6 +113,76 @@ def _by_resource_tag(tagged: list) -> dict:
     return out
 
 
+def _live_by_resource_tag(entries: list, id_field: str, ctp_id: str) -> dict:
+    """Index a DescribeEc2 result by its upbound.io/ctp-resource tag.
+
+    Scoped to this control plane's identity tag. The describe is already filtered
+    server-side by spec.parameters.adopt.ec2Filters, but that filter is
+    caller-supplied: an absent one makes the call region-wide, so the identity
+    check is what actually keeps another control plane's resources out.
+
+    Ambiguity is still refused, for the reason _by_resource_tag explains - but
+    here two candidates mean two *live* resources carrying one logical name,
+    i.e. a duplicate a previous run already created. Adopting either one leaves
+    the other stranded, so report nothing and let the create fail loudly.
+    """
+    out = {}
+    for entry in entries or []:
+        tags = entry.get("tags") or {}
+        if ctp_id and tags.get("upbound.io/ctp-id") != ctp_id:
+            continue
+        logical = tags.get("upbound.io/ctp-resource")
+        identifier = entry.get(id_field)
+        if logical and identifier:
+            out.setdefault(logical, []).append(identifier)
+    return {k: v[0] for k, v in out.items() if len(v) == 1}
+
+
+def _association_external_names(route_tables: list, subnets: dict) -> dict:
+    """Map rta-<suffix> to its live RouteTableAssociation id.
+
+    Associations carry no tags of their own and the Tagging API does not index
+    them, so they are matched through their subnet. configuration-aws-network
+    names a subnet subnet-<suffix> and its association rta-<suffix> from the same
+    spec.parameters.subnets entry (functions/network/main.k:100,178), so the
+    association AWS reports against a discovered subnet inherits that subnet's
+    suffix.
+
+    `subnets` is the {logical: subnetId} map _live_by_resource_tag produced, so
+    only subnets that belong to this control plane and are unambiguous can
+    contribute an association.
+    """
+    by_subnet_id = {v: k for k, v in (subnets or {}).items()}
+    out = {}
+    for rt in route_tables or []:
+        for assoc in rt.get("associations") or []:
+            # An association mid-transition or already gone must not be adopted.
+            # An empty state is accepted: AssociationState is absent on older
+            # API responses rather than meaning "not associated".
+            if (assoc.get("state") or "associated") != "associated":
+                continue
+            assoc_id = assoc.get("routeTableAssociationId")
+            if not assoc_id:
+                continue
+            # The main association is deliberately NOT adopted, even though it
+            # is right here and `mrt` is a valid key. aws_main_route_table_association
+            # deletes by calling ReplaceRouteTableAssociation to restore
+            # original_route_table_id - a create-time-only field that AWS never
+            # returns, so adoption cannot populate it and LateInitialize cannot
+            # recover it. An adopted `mrt` then fails to delete with
+            #   ReplaceRouteTableAssociation ... MissingParameter: The request
+            #   must contain the parameter routeTableId
+            # and its finalizer blocks the route table and the VPC. Left
+            # unadopted, Crossplane re-issues the association and records an
+            # original it can restore, so the MR deletes cleanly.
+            if assoc.get("main"):
+                continue
+            subnet_logical = by_subnet_id.get(assoc.get("subnetId"))
+            if subnet_logical:
+                out["rta-" + subnet_logical[len("subnet-"):]] = assoc_id
+    return out
+
+
 def build_external_names(adopt_ctx: dict, id_val: str, cluster_name: str,
                          account_id: str, oidc_host: str) -> dict:
     """Map composition-resource-name to the external name to inject.
@@ -122,13 +200,24 @@ def build_external_names(adopt_ctx: dict, id_val: str, cluster_name: str,
     # Crossplane create. A duplicate is bad; adopting a dead identifier is the
     # same duplicate plus a confusing error, so ambiguity must not be guessed.
     #
-    # Resolving these properly needs an authoritative lookup (Cloud Control, or
-    # ec2:DescribeSubnets and friends) which lists only live resources. Until
-    # that exists, log the ambiguity rather than hiding it.
+    # For subnets and route tables the ambiguity is now settled by the EC2
+    # describes overlaid below; this guard still covers every other taggable
+    # type, which has no authoritative query wired.
     names = {}
     for logical, candidates in _by_resource_tag(adopt_ctx.get("tagged")).items():
         if len(candidates) == 1:
             names[logical] = candidates[0]
+
+    # Authoritative overlay, and the whole reason the discover-subnets and
+    # discover-route-tables steps exist. An EC2 describe lists only live
+    # resources, so it settles the logical names the sweep above had to refuse
+    # and supplies the associations the Tagging API never indexed. It wins over
+    # the sweep wherever both have an answer.
+    live_subnets = _live_by_resource_tag(
+        adopt_ctx.get("subnets"), "subnetId", id_val)
+    names.update(live_subnets)
+    names.update(_association_external_names(
+        adopt_ctx.get("routeTables"), live_subnets))
 
     # The derived entries below are gated on adopt_ctx, i.e. on the adopt
     # Composition having run its discovery steps. They need no query - they are

@@ -1611,4 +1611,110 @@ CASES = [
                                    'metadata': {'name': 'test-cp'},
                                    'spec': {'parameters': {'externalNames': {'sg': 'sg-0ecce795575a1aef7',
                                                                              'sgr-postgres': 'sgrule-2141789600'}}}}]}},
+    # The gap the DescribeEc2 steps close. The Resource Groups Tagging API returns
+    # deleted subnets alongside live ones under the same upbound.io/ctp-resource
+    # tag, so build_external_names has to refuse every private subnet as
+    # ambiguous - which is exactly what held 3 subnets unadopted through the last
+    # full provision/orphan/remanage cycle. ec2:DescribeSubnets lists only live
+    # subnets, so it settles the name and the overlay wins over the refusal.
+    #
+    # The foreign entry carries the SAME logical name under a different
+    # upbound.io/ctp-id. That is what makes this test prove the identity scoping:
+    # without it the describe would offer two candidates, be refused as ambiguous
+    # in turn, and the asserted key would be absent rather than wrong. Rendered
+    # against the default Composition for the same reason as
+    # adopt-injects-eip-external-name above.
+    {'name': 'adopt-resolves-ambiguous-subnet-from-live-describe',
+     'spec': {'compositionPath': 'apis/ctp/composition.yaml',
+              'xrdPath': 'apis/ctp/definition.yaml',
+              'validate': True,
+              'timeoutSeconds': 60,
+              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:subnet/subnet-0aa11bb22cc33dd44',
+                                                'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                         'upbound.io/ctp-resource': 'subnet-us-east-1a-192-168-96-0-19-private'}},
+                                               {'arn': 'arn:aws:ec2:us-east-1:123456789012:subnet/subnet-0ee55ff66aa77bb88',
+                                                'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                         'upbound.io/ctp-resource': 'subnet-us-east-1a-192-168-96-0-19-private'}}],
+                                    'subnets': [{'subnetId': 'subnet-0aa11bb22cc33dd44',
+                                                 'state': 'available',
+                                                 'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                          'upbound.io/ctp-resource': 'subnet-us-east-1a-192-168-96-0-19-private'}},
+                                                {'subnetId': 'subnet-0ff99ee88dd77cc66',
+                                                 'state': 'available',
+                                                 'tags': {'upbound.io/ctp-id': 'other-cp',
+                                                          'upbound.io/ctp-resource': 'subnet-us-east-1a-192-168-96-0-19-private'}}],
+                                    'routeTables': [],
+                                    'pia': []}},
+              'xr': {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                     'kind': 'ControlPlane',
+                     'metadata': {'name': 'test-cp'},
+                     'spec': {'parameters': {'id': 'test-cp',
+                                             'region': 'us-east-1',
+                                             'version': '1.34',
+                                             'managementMode': 'Provision',
+                                             'nodes': {'count': 2,
+                                                       'instanceType': 't3.small'}}}},
+              'assertResources': [{'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                                   'kind': 'Network',
+                                   'metadata': {'name': 'test-cp'},
+                                   'spec': {'parameters': {'externalNames': {'subnet-us-east-1a-192-168-96-0-19-private': 'subnet-0aa11bb22cc33dd44'}}}}]}},
+    # RouteTableAssociations carry no tags and the Tagging API does not index
+    # them, so they are matched through their subnet: configuration-aws-network
+    # derives subnet-<suffix> and rta-<suffix> from one spec.parameters.subnets
+    # entry, so an association reported against a discovered subnet inherits that
+    # subnet's suffix.
+    #
+    # The main association is present in the same response and is deliberately
+    # NOT adopted - an adopted `mrt` cannot be deleted (see the comment in
+    # _association_external_names). rtbassoc-0112233445566778 below is that main
+    # association; the assertion proves it is skipped, because assertResources is
+    # a subset match and could not detect an extra key.
+    #
+    # rtbassoc-0999888777666555 is a disassociated association for the same
+    # subnet, listed after the live one: it must be skipped on state, not
+    # last-write-wins, or it would overwrite the value asserted below.
+    {'name': 'adopt-derives-route-table-associations',
+     'spec': {'compositionPath': 'apis/ctp/composition.yaml',
+              'xrdPath': 'apis/ctp/definition.yaml',
+              'validate': True,
+              'timeoutSeconds': 60,
+              'context': {'adopt': {'tagged': [],
+                                    'subnets': [{'subnetId': 'subnet-0aa11bb22cc33dd44',
+                                                 'state': 'available',
+                                                 'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                          'upbound.io/ctp-resource': 'subnet-us-east-1a-192-168-96-0-19-private'}}],
+                                    'routeTables': [{'routeTableId': 'rtb-0abc11223344556677',
+                                                     'vpcId': 'vpc-0abc11223344556677',
+                                                     'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                              'upbound.io/ctp-resource': 'rt'},
+                                                     'associations': [{'routeTableAssociationId': 'rtbassoc-0112233445566778',
+                                                                       'routeTableId': 'rtb-0abc11223344556677',
+                                                                       'subnetId': '',
+                                                                       'main': True,
+                                                                       'state': 'associated'},
+                                                                      {'routeTableAssociationId': 'rtbassoc-0aabbccddeeff001',
+                                                                       'routeTableId': 'rtb-0abc11223344556677',
+                                                                       'subnetId': 'subnet-0aa11bb22cc33dd44',
+                                                                       'main': False,
+                                                                       'state': 'associated'},
+                                                                      {'routeTableAssociationId': 'rtbassoc-0999888777666555',
+                                                                       'routeTableId': 'rtb-0abc11223344556677',
+                                                                       'subnetId': 'subnet-0aa11bb22cc33dd44',
+                                                                       'main': False,
+                                                                       'state': 'disassociated'}]}],
+                                    'pia': []}},
+              'xr': {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                     'kind': 'ControlPlane',
+                     'metadata': {'name': 'test-cp'},
+                     'spec': {'parameters': {'id': 'test-cp',
+                                             'region': 'us-east-1',
+                                             'version': '1.34',
+                                             'managementMode': 'Provision',
+                                             'nodes': {'count': 2,
+                                                       'instanceType': 't3.small'}}}},
+              'assertResources': [{'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                                   'kind': 'Network',
+                                   'metadata': {'name': 'test-cp'},
+                                   'spec': {'parameters': {'externalNames': {'subnet-us-east-1a-192-168-96-0-19-private': 'subnet-0aa11bb22cc33dd44',
+                                                                             'rta-us-east-1a-192-168-96-0-19-private': 'rtbassoc-0aabbccddeeff001'}}}}]}},
 ]

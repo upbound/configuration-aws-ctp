@@ -59,6 +59,69 @@ spec:
         namespace: default
         name: aws-creds
 
+  # Authoritative, live-only reads for the two things the tag sweep above cannot
+  # resolve. Unlike the Tagging API an EC2 describe never returns a deleted
+  # resource, and DescribeRouteTables carries each route table's associations,
+  # which no tag-based or Cloud Control query exposes at all.
+  #
+  # Both are scoped by spec.parameters.adopt.ec2Filters, which takes native EC2
+  # filter names - a tag filter is "tag:upbound.io/ctp-id", not the bare tag key
+  # tagFilters uses above. With no filter the calls go region-wide; that is
+  # merely wasteful rather than wrong, because build_external_names re-checks
+  # the identity tag on every entry.
+  - functionRef:
+      name: upbound-function-aws-query
+    step: discover-subnets
+    input:
+      apiVersion: aws.fn.crossplane.io/v1beta1
+      kind: Input
+      queryType: DescribeEc2
+      regionRef: spec.parameters.region
+      filtersRef: spec.parameters.adopt.ec2Filters
+      parameters:
+        operation: Subnets
+      target: context.adopt.subnets
+    credentials:
+    - name: aws-creds
+      source: Secret
+      secretRef:
+        namespace: default
+        name: aws-creds
+
+  # Route tables come along for the ride: the target of this step is the
+  # associations, matched to their subnets by build_external_names. It runs
+  # after discover-subnets only for readability - there is no data dependency,
+  # both read the same filter off the XR spec.
+  - functionRef:
+      name: upbound-function-aws-query
+    step: discover-route-tables
+    input:
+      apiVersion: aws.fn.crossplane.io/v1beta1
+      kind: Input
+      queryType: DescribeEc2
+      regionRef: spec.parameters.region
+      filtersRef: spec.parameters.adopt.ec2Filters
+      parameters:
+        operation: RouteTables
+      target: context.adopt.routeTables
+    credentials:
+    - name: aws-creds
+      source: Secret
+      secretRef:
+        namespace: default
+        name: aws-creds
+
+  # The two database SecurityGroupRules are NOT discovered here. Their
+  # external-name is Terraform's sgrule-<crc32> hash, not an AWS identifier, so
+  # DescribeSecurityGroupRules cannot supply it - adopt.py derives it instead
+  # (see sgrule_external_name). It could still supply the live rule signature
+  # the hash is computed from, replacing the constants mirrored from
+  # configuration-aws-network, but DescribeSecurityGroupRules can only be scoped
+  # by group-id: aws_security_group_rule carries no tags, so tag:upbound.io/ctp-id
+  # matches nothing. The group id is discovered by the sweep above and is
+  # therefore not available as a static filter in this Composition. Until that
+  # is solved the hash stands, and its inputs stay mirrored by hand.
+
   # discover-assoc REMOVED. AWS::EC2::SubnetRouteTableAssociation cannot be
   # listed safely in a shared account. ListResources enumerates EVERY
   # association in the account and hydration calls GetResource on each one, so a
@@ -70,11 +133,11 @@ spec:
   # with no SubnetId/RouteTableId to map an association to its logical name, so it
   # buys nothing.
   #
-  # Consequence: RouteTableAssociations are not adopted and will duplicate. That
-  # fails loudly rather than silently - AWS rejects associating an already
-  # associated subnet. Closing this needs an authoritative ec2:DescribeRouteTables
-  # query (see the DescribeEc2 extension in the plan), which reads only the
-  # route tables of this VPC instead of everything in the account.
+  # Closed by discover-route-tables above: ec2:DescribeRouteTables returns each
+  # route table with its associations inline, so there is nothing to enumerate
+  # account-wide and nothing to hydrate. Kept as a record of why Cloud Control
+  # is not the answer here - the lesson generalises to any hydrated
+  # ListResources call in a shared account.
 
   - functionRef:
       name: upbound-configuration-aws-ctpctp

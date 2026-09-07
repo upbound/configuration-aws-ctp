@@ -208,3 +208,43 @@ to inject `crossplane.io/external-name` before Crossplane reconciles.
 **A resource provisioned without those tags is not adoptable.** Tag before you
 provision anything you intend to keep. See
 `docs/superpowers/specs/2026-09-01-aws-ctp-dynamic-provisioning-design.md`.
+
+Discovery uses two sources, because the tag query alone is not sufficient:
+
+| Source | Finds | Why both |
+|---|---|---|
+| Resource Groups Tagging API (`adopt.tagFilters`) | Every taggable resource in one server-side call | Broad, but it keeps returning deleted resources under the same tag, which makes a logical name ambiguous |
+| `ec2:DescribeSubnets` / `ec2:DescribeRouteTables` (`adopt.ec2Filters`) | Live subnets, and route-table associations | Returns only live resources, so it settles that ambiguity; associations carry no tags and the Tagging API does not index them at all |
+
+Ambiguity is never guessed: where a logical name still has more than one
+candidate, nothing is injected and Crossplane creates instead. A duplicate is
+bad, but adopting a dead identifier is the same duplicate plus a confusing
+error.
+
+Both filter lists duplicate `id` on purpose - `function-aws-query` resolves them
+from a field path and cannot template a scalar into a `{name, values}` list. They
+are not interchangeable: `tagFilters` takes a bare tag key, `ec2Filters` takes
+native EC2 filter names, so the same filter is `upbound.io/ctp-id` in one and
+`tag:upbound.io/ctp-id` in the other.
+
+```yaml
+spec:
+  crossplane:
+    compositionRef:
+      name: controlplane-adopt.aws.platform.upbound.io
+  parameters:
+    id: awsctpcp1
+    managementMode: Provision
+    adopt:
+      tagFilters:
+      - name: upbound.io/ctp-id
+        values: ["awsctpcp1"]
+      ec2Filters:
+      - name: tag:upbound.io/ctp-id
+        values: ["awsctpcp1"]
+```
+
+The two database `SecurityGroupRule`s are the one exception: their external-name
+is a Terraform-computed `sgrule-<crc32>` hash rather than an AWS identifier, so
+no query can return it and the adopt path computes it from the discovered
+security-group id instead.

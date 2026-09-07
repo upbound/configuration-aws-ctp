@@ -362,6 +362,32 @@ spec:
                           required:
                           - name
                           - values
+                      ec2Filters:
+                        type: array
+                        description: >-
+                          Filters passed to function-aws-query's DescribeEc2
+                          calls as filtersRef. These take native EC2 filter
+                          names, so a tag filter needs the "tag:" prefix the
+                          Tagging API does not use, e.g.
+                          [{name: "tag:upbound.io/ctp-id", values: ["awsctpcp1"]}].
+                          It duplicates `id` for the same reason tagFilters
+                          does. Set it: an empty list makes DescribeSubnets and
+                          DescribeRouteTables region-wide, which is slow and
+                          returns every other control plane's resources. Those
+                          are discarded (the composition re-checks the identity
+                          tag client-side) but nothing else scopes the call.
+                        items:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                            values:
+                              type: array
+                              items:
+                                type: string
+                          required:
+                          - name
+                          - values
                 required:
                 - id
                 - region
