@@ -350,6 +350,7 @@ spec:
                           It duplicates `id` on purpose: function-aws-query
                           resolves filtersRef from a field path and cannot
                           template a scalar into a {name, values} list.
+                        minItems: 1
                         items:
                           type: object
                           properties:
@@ -377,6 +378,7 @@ spec:
                           region, so omitting this fails the adopt path loudly.
                           An over-broad filter is safe - the composition
                           re-checks the identity tag on every entry.
+                        minItems: 1
                         items:
                           type: object
                           properties:
