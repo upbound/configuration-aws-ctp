@@ -88,10 +88,14 @@ this configuration.
 
 ## `Deprovision` caveat: the main route table blocks teardown
 
-**Fixed upstream** by dropping the `MainRouteTableAssociation` from
-`configuration-aws-network`. This still applies to a control plane provisioned
-by a version that composed it - the stale association survives in AWS, because
-nothing deletes what is no longer composed.
+**Fixed in `configuration-aws-network` v2.2.0**, which dropped the
+`MainRouteTableAssociation`. This configuration does not have it yet: it reaches
+network only through `configuration-aws-eks`, whose latest release (v2.1.1) still
+pins v2.1.0. Until eks re-pins, the caveat below applies to every control plane.
+
+It keeps applying afterwards to any control plane provisioned by a version that
+composed the association - the stale one survives in AWS, because nothing deletes
+what is no longer composed.
 
 **Such a decommission pass will not finish unattended.** It drains to two
 resources and stalls;
