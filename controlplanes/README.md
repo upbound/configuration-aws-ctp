@@ -82,12 +82,19 @@ this configuration.
 > were the private subnets, route-table associations and security-group rules
 > the EC2 describes now address. A later real-AWS run (2026-09-07) adopted
 > 31/31 with no duplicates, so cross-run `Provision` is exercised. Cross-run
-> **`Deprovision` is not clean** - read the caveat below first.
+> `Deprovision` leaked a VPC until `configuration-aws-network` dropped its
+> `MainRouteTableAssociation`; see the caveat below if you are on an older
+> version, or have a control plane provisioned by one.
 
 ## `Deprovision` caveat: the main route table blocks teardown
 
-**A decommission pass will not finish unattended once a control plane has been
-adopted at least once.** It drains to two resources and stalls;
+**Fixed upstream** by dropping the `MainRouteTableAssociation` from
+`configuration-aws-network`. This still applies to a control plane provisioned
+by a version that composed it - the stale association survives in AWS, because
+nothing deletes what is no longer composed.
+
+**Such a decommission pass will not finish unattended.** It drains to two
+resources and stalls;
 `.github/workflows/provision.yaml` polls ~45 minutes, then fails the job. From
 `kubectl get managed -A`:
 
@@ -95,11 +102,12 @@ adopted at least once.** It drains to two resources and stalls;
   `InvalidParameterValue: cannot disassociate the main route table association`
 - `VPC` stuck behind it on `DependencyViolation`
 
-**Why.** `configuration-aws-network` composes a `MainRouteTableAssociation`
-(`mrt`) pointing the VPC's main route table at its own. It cannot be adopted: it
-deletes by restoring `original_route_table_id`, which AWS never returns (the
-generated CRD exposes it only under `status.atProvider`), so the adopt path
-leaves it unadopted and lets Crossplane re-create it.
+**Why.** `configuration-aws-network` used to compose a
+`MainRouteTableAssociation` (`mrt`) pointing the VPC's main route table at its
+own. It cannot be adopted: it deletes by restoring `original_route_table_id`,
+which AWS never returns (the generated CRD exposes it only under
+`status.atProvider`), so the adopt path left it unadopted and let Crossplane
+re-create it.
 
 Fine on the first cycle, when the main route table is still AWS's default. On
 any later run the main association already points at the composed table, so the
@@ -126,9 +134,9 @@ aws ec2 replace-route-table-association \
 `rt` and `vpc` then delete on the next reconcile. If the runner is already gone,
 delete both by hand - Crossplane will never re-issue those deletes.
 
-**The real fix is upstream:** every subnet already has an explicit association to
-the composed route table, so `mrt` adds no routing behaviour and is the sole
-cause. Dropping it from `configuration-aws-network` removes the whole class.
+This is why `configuration-aws-network` no longer composes it: every subnet
+already has an explicit association to the composed route table, so `mrt` added
+no routing behaviour and was the sole cause.
 
 ## Add a control plane
 

@@ -211,12 +211,13 @@ def _association_external_names(route_tables: list, subnets: dict,
             assoc_id = assoc.get("routeTableAssociationId")
             if not assoc_id:
                 continue
-            # An adopted `mrt` cannot be deleted: it restores
-            # original_route_table_id, which AWS never returns (status-only on
-            # the CRD). Redundant in practice - AWS reports no subnet id for an
-            # implicit association, so the join below cannot match one - but kept
-            # so the intent survives a change to that join. Skipping it does NOT
-            # make teardown clean; see controlplanes/README.md.
+            # Never adopt the main association. configuration-aws-network no
+            # longer composes a MainRouteTableAssociation (it made the VPC
+            # undeletable), so there is nothing to adopt it into - and an
+            # adopted one could not be deleted anyway, since it restores
+            # original_route_table_id, which AWS never returns. Redundant in
+            # practice too: AWS reports no subnet id for an implicit
+            # association, so the join below cannot match one.
             if assoc.get("main"):
                 continue
             subnet_logical = by_subnet_id.get(assoc.get("subnetId"))
@@ -307,7 +308,7 @@ def build_external_names(adopt_ctx: dict, id_val: str, cluster_name: str,
 # absent from both sets belong to resources composed here and are applied
 # locally by apply_external_names.
 _NETWORK_KEYS = frozenset({
-    "vpc", "igw", "rt", "route", "mrt", "sg", "sgr-postgres", "sgr-mysql",
+    "vpc", "igw", "rt", "route", "sg", "sgr-postgres", "sgr-mysql",
 })
 _EKS_KEYS = frozenset({
     "controlplaneRole", "kubernetesCluster", "clusterSecurityGroupImport",
