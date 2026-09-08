@@ -211,13 +211,12 @@ def _association_external_names(route_tables: list, subnets: dict,
             assoc_id = assoc.get("routeTableAssociationId")
             if not assoc_id:
                 continue
-            # Never adopt the main association. configuration-aws-network no
-            # longer composes a MainRouteTableAssociation (it made the VPC
-            # undeletable), so there is nothing to adopt it into - and an
-            # adopted one could not be deleted anyway, since it restores
-            # original_route_table_id, which AWS never returns. Redundant in
-            # practice too: AWS reports no subnet id for an implicit
-            # association, so the join below cannot match one.
+            # Never adopt the main association. Nothing composes a
+            # MainRouteTableAssociation any more (aws-network dropped it in
+            # v2.2.0 - it made the VPC undeletable), and an adopted one could
+            # not be deleted anyway: it restores original_route_table_id, which
+            # AWS never returns. Redundant in practice too, since AWS reports no
+            # subnet id for an implicit association.
             if assoc.get("main"):
                 continue
             subnet_logical = by_subnet_id.get(assoc.get("subnetId"))

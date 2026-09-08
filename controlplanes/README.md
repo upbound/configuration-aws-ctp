@@ -78,52 +78,35 @@ Treat a control plane provisioned without the identity tags as create-only:
 tagging is what makes it adoptable, and it cannot be applied retroactively by
 this configuration.
 
-> **Status.** An earlier cycle adopted 23 of 31 resources; the 8 that did not
-> were the private subnets, route-table associations and security-group rules
-> the EC2 describes now address. A later real-AWS run (2026-09-07) adopted
-> 31/31 with no duplicates, so cross-run `Provision` is exercised. Cross-run
-> `Deprovision` leaked a VPC until `configuration-aws-network` dropped its
-> `MainRouteTableAssociation`; see the caveat below if you are on an older
-> version, or have a control plane provisioned by one.
+> **Status.** A real-AWS run (2026-09-07) adopted 31/31 resources with no
+> duplicates, so cross-run `Provision` is exercised. Cross-run `Deprovision`
+> leaked a VPC until `configuration-aws-network` v2.2.0 dropped its
+> `MainRouteTableAssociation`; this configuration now pulls that in via
+> `configuration-aws-eks` v2.2.0. The leak is structurally gone but has **not
+> been re-verified on real AWS**. See the migration note below if you have a
+> control plane provisioned before that version.
 
-## `Deprovision` caveat: the main route table blocks teardown
+## Migration: control planes provisioned before network v2.2.0
 
-**Fixed in `configuration-aws-network` v2.2.0**, which dropped the
-`MainRouteTableAssociation`. This configuration does not have it yet: it reaches
-network only through `configuration-aws-eks`, whose latest release (v2.1.1) still
-pins v2.1.0. Until eks re-pins, the caveat below applies to every control plane.
+`configuration-aws-network` used to compose a `MainRouteTableAssociation` (`mrt`)
+that made the composed route table the VPC's main one. It could not be adopted -
+it deletes by restoring `original_route_table_id`, which AWS never returns - so a
+stateless re-apply recorded the composed table as its own "original", and its
+delete left that table still main. Deleting a route table disassociates every
+association including the main one, which AWS refuses, so `rt` and the VPC leaked.
 
-It keeps applying afterwards to any control plane provisioned by a version that
-composed the association - the stale one survives in AWS, because nothing deletes
-what is no longer composed.
+v2.2.0 dropped the resource, and this configuration pulls it in via
+`configuration-aws-eks` v2.2.0. **New control planes are unaffected.**
 
-**Such a decommission pass will not finish unattended.** It drains to two
-resources and stalls;
-`.github/workflows/provision.yaml` polls ~45 minutes, then fails the job. From
-`kubectl get managed -A`:
-
-- `RouteTable` (`rt`) stuck deleting on
-  `InvalidParameterValue: cannot disassociate the main route table association`
-- `VPC` stuck behind it on `DependencyViolation`
-
-**Why.** `configuration-aws-network` used to compose a
-`MainRouteTableAssociation` (`mrt`) pointing the VPC's main route table at its
-own. It cannot be adopted: it deletes by restoring `original_route_table_id`,
-which AWS never returns (the generated CRD exposes it only under
-`status.atProvider`), so the adopt path left it unadopted and let Crossplane
-re-create it.
-
-Fine on the first cycle, when the main route table is still AWS's default. On
-any later run the main association already points at the composed table, so the
-re-created `mrt` records *that* as the original and its delete restores it as
-main - and deleting a route table disassociates every association it has,
-including the main one, which AWS refuses.
-
-**Recovery.** Point the main association back at the VPC's default route table:
+A control plane provisioned before that version still has the association live in
+AWS, and nothing will delete it - Crossplane does not manage what is no longer
+composed. Its decommission still stalls with `rt` stuck on
+`InvalidParameterValue: cannot disassociate the main route table association` and
+the VPC behind it on `DependencyViolation`. Point the main association back at the
+VPC's default route table once, and the reconcile continues:
 
 ```bash
 VPC=vpc-...        # the stuck VPC
-# the default route table AWS created with the VPC (Main=true, no explicit associations)
 DEFAULT=$(aws ec2 describe-route-tables \
   --filters "Name=vpc-id,Values=$VPC" \
   --query 'RouteTables[?Associations[?Main==`true`]] | [0].RouteTableId' --output text)
@@ -135,12 +118,7 @@ aws ec2 replace-route-table-association \
   --association-id "$ASSOC" --route-table-id "$DEFAULT"
 ```
 
-`rt` and `vpc` then delete on the next reconcile. If the runner is already gone,
-delete both by hand - Crossplane will never re-issue those deletes.
-
-This is why `configuration-aws-network` no longer composes it: every subnet
-already has an explicit association to the composed route table, so `mrt` added
-no routing behaviour and was the sole cause.
+If the runner is already gone, delete `rt` and the VPC by hand.
 
 ## Add a control plane
 
