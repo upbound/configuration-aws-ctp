@@ -43,13 +43,10 @@ On Azure every managed resource has a deterministic name and adoption is
 automatic. On AWS most identifiers are assigned by the cloud, so a fresh
 bootstrap cluster holds no way to find the resources it created last time.
 
-The adopt path closes this by tagging every owned resource with the control
-plane's identity and querying those tags to inject `crossplane.io/external-name`
-before Crossplane reconciles (see the "Adoption on AWS" section of the top-level
-README, and
-`docs/superpowers/specs/2026-09-01-aws-ctp-dynamic-provisioning-design.md`). It
-is **opt-in**: a control plane must select the adopt Composition and supply both
-filter lists.
+The adopt path closes this by tagging every owned resource and querying those
+tags to inject `crossplane.io/external-name` before Crossplane reconciles (see
+"Adoption on AWS" in the top-level README). Selecting the Composition is the
+whole opt-in - the filters are derived from `id`:
 
 ```yaml
 spec:
@@ -57,18 +54,12 @@ spec:
     compositionRef:
       name: controlplane-adopt.aws.platform.upbound.io
   parameters:
-    adopt:
-      tagFilters:
-      - name: upbound.io/ctp-id
-        values: ["<id>"]
-      ec2Filters:
-      - name: tag:upbound.io/ctp-id
-        values: ["<id>"]
+    id: <id>
 ```
 
-It also needs an `aws-creds` Secret in `default` - the query steps read
-credentials from a static block in the Composition, which is why they live in a
-separate Composition rather than behind a flag on the default one.
+It also needs an `aws-creds` Secret in `default`, which both provision suites
+create. The query steps read it from a static block in the Composition, which is
+why adopt is a separate Composition rather than a flag.
 
 Without that opt-in, this folder supports:
 
@@ -87,12 +78,57 @@ Treat a control plane provisioned without the identity tags as create-only:
 tagging is what makes it adoptable, and it cannot be applied retroactively by
 this configuration.
 
-> **Status.** Last measured full cycle adopted 23 of 31 resources with zero
-> duplicates. The 8 that did not were 3 private subnets, 3 route-table
-> associations and 2 security-group rules; the subnets and associations are what
-> the `ec2Filters` queries above address. That has passed composition tests but
-> has **not yet been re-run against real AWS**, so treat cross-run
-> `Provision`/`Deprovision` as unverified rather than working.
+> **Status.** An earlier cycle adopted 23 of 31 resources; the 8 that did not
+> were the private subnets, route-table associations and security-group rules
+> the EC2 describes now address. A later real-AWS run (2026-09-07) adopted
+> 31/31 with no duplicates, so cross-run `Provision` is exercised. Cross-run
+> **`Deprovision` is not clean** - read the caveat below first.
+
+## `Deprovision` caveat: the main route table blocks teardown
+
+**A decommission pass will not finish unattended once a control plane has been
+adopted at least once.** It drains to two resources and stalls;
+`.github/workflows/provision.yaml` polls ~45 minutes, then fails the job. From
+`kubectl get managed -A`:
+
+- `RouteTable` (`rt`) stuck deleting on
+  `InvalidParameterValue: cannot disassociate the main route table association`
+- `VPC` stuck behind it on `DependencyViolation`
+
+**Why.** `configuration-aws-network` composes a `MainRouteTableAssociation`
+(`mrt`) pointing the VPC's main route table at its own. It cannot be adopted: it
+deletes by restoring `original_route_table_id`, which AWS never returns (the
+generated CRD exposes it only under `status.atProvider`), so the adopt path
+leaves it unadopted and lets Crossplane re-create it.
+
+Fine on the first cycle, when the main route table is still AWS's default. On
+any later run the main association already points at the composed table, so the
+re-created `mrt` records *that* as the original and its delete restores it as
+main - and deleting a route table disassociates every association it has,
+including the main one, which AWS refuses.
+
+**Recovery.** Point the main association back at the VPC's default route table:
+
+```bash
+VPC=vpc-...        # the stuck VPC
+# the default route table AWS created with the VPC (Main=true, no explicit associations)
+DEFAULT=$(aws ec2 describe-route-tables \
+  --filters "Name=vpc-id,Values=$VPC" \
+  --query 'RouteTables[?Associations[?Main==`true`]] | [0].RouteTableId' --output text)
+ASSOC=$(aws ec2 describe-route-tables \
+  --filters "Name=vpc-id,Values=$VPC" \
+  --query 'RouteTables[].Associations[?Main==`true`].RouteTableAssociationId | [0][0]' \
+  --output text)
+aws ec2 replace-route-table-association \
+  --association-id "$ASSOC" --route-table-id "$DEFAULT"
+```
+
+`rt` and `vpc` then delete on the next reconcile. If the runner is already gone,
+delete both by hand - Crossplane will never re-issue those deletes.
+
+**The real fix is upstream:** every subnet already has an explicit association to
+the composed route table, so `mrt` adds no routing behaviour and is the sole
+cause. Dropping it from `configuration-aws-network` removes the whole class.
 
 ## Add a control plane
 

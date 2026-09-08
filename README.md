@@ -206,26 +206,43 @@ resource this configuration owns is tagged `upbound.io/ctp-id: <id>` and
 to inject `crossplane.io/external-name` before Crossplane reconciles.
 
 **A resource provisioned without those tags is not adoptable.** Tag before you
-provision anything you intend to keep. See
-`docs/superpowers/specs/2026-09-01-aws-ctp-dynamic-provisioning-design.md`.
+provision anything you intend to keep - the tags cannot be applied retroactively
+by this configuration.
 
 Discovery uses two sources, because the tag query alone is not sufficient:
 
 | Source | Finds | Why both |
 |---|---|---|
-| Resource Groups Tagging API (`adopt.tagFilters`) | Every taggable resource in one server-side call | Broad, but it keeps returning deleted resources under the same tag, which makes a logical name ambiguous |
-| `DescribeSubnets` / `DescribeRouteTables` (`adopt.ec2Filters`) | Live subnets, and route-table associations | Returns only live resources, so it settles that ambiguity; associations carry no tags and the Tagging API does not index them at all |
+| Resource Groups Tagging API | Every taggable resource in one server-side call | Broad, but it keeps returning deleted resources under the same tag, which makes a logical name ambiguous |
+| `DescribeSubnets` / `DescribeRouteTables` | Live subnets, and route-table associations | Returns only live resources, so it settles that ambiguity; associations carry no tags and the Tagging API does not index them at all |
 
-Ambiguity is never guessed: where a logical name still has more than one
-candidate, nothing is injected and Crossplane creates instead. A duplicate is
-bad, but adopting a dead identifier is the same duplicate plus a confusing
-error.
+The adopt Composition inserts four steps before `ctp`:
 
-Both filter lists duplicate `id` on purpose - `function-aws-query` resolves them
-from a field path and cannot template a scalar into a `{name, values}` list. They
-are not interchangeable: `tagFilters` takes a bare tag key, `ec2Filters` takes
-native EC2 filter names, so the same filter is `upbound.io/ctp-id` in one and
-`tag:upbound.io/ctp-id` in the other.
+| Step | Function | Leaves in context |
+|---|---|---|
+| `prepare-adopt-filters` | ctp (mode selected by its `input`) | `adopt.filters.{tagged,ec2}` |
+| `discover-tagged` | aws-query `GetResources` | `adopt.tagged` |
+| `discover-subnets` | aws-query `DescribeSubnets` | `adopt.subnets` |
+| `discover-route-tables` | aws-query `DescribeRouteTables` | `adopt.routeTables` |
+
+`ctp` then reads all four and stamps `crossplane.io/external-name`. The context is
+per-reconcile scratch space; nothing is persisted.
+
+Everything comes from `spec.parameters.id`: the `upbound.io/ctp-id` tag, both
+filter shapes, the identity re-check, and the `oidc-provider` /
+`backup-policy-attachment` names.
+
+Nothing the queries return is trusted. Every entry is re-checked before use:
+
+| Check | Why |
+|---|---|
+| `upbound.io/ctp-id` must equal this control plane's `id` | Shared account: one other control plane is otherwise enough to make its VPC the only candidate for `vpc`, so unambiguous, so adopted |
+| the logical name must be one this configuration emits | `upbound.io/ctp-resource` is an ordinary AWS tag, and its value picks which resource an identifier lands on |
+| a subnet must still be in this control plane's layout | A subnet orphaned by an earlier layout is live and correctly tagged, and forwarding its key aborts the whole `Network` composition |
+| ambiguity is refused, and an empty `id` adopts nothing | A dead identifier is the duplicate adoption prevents, plus a confusing error |
+
+The filters being derived rather than configured is deliberate: a filter that
+does not scope to this control plane cannot be written.
 
 ```yaml
 spec:
@@ -235,16 +252,16 @@ spec:
   parameters:
     id: awsctpcp1
     managementMode: Provision
-    adopt:
-      tagFilters:
-      - name: upbound.io/ctp-id
-        values: ["awsctpcp1"]
-      ec2Filters:
-      - name: tag:upbound.io/ctp-id
-        values: ["awsctpcp1"]
 ```
+
+Selecting the Composition is the whole opt-in. It also needs an `aws-creds`
+Secret in `default` - the query steps read credentials from a static block in
+the Composition, which is why adopt is a separate Composition rather than a flag.
 
 The two database `SecurityGroupRule`s are the one exception: their external-name
 is a Terraform-computed `sgrule-<crc32>` hash rather than an AWS identifier, so
 no query can return it and the adopt path computes it from the discovered
-security-group id instead.
+security-group id instead. Only the annotation's *presence* is load-bearing: the
+provider matches a rule by its ports, protocol, type and CIDRs and never
+validates the hash. It is computed correctly anyway, so the rendered annotation
+matches what the provider would have written.
