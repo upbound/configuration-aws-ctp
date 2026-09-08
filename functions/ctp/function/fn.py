@@ -37,6 +37,7 @@ from crossplane.function.proto.v1 import run_function_pb2_grpc as grpcv1
 
 from .adopt import (
     apply_external_names,
+    build_adopt_filters,
     build_external_names,
     eks_external_names,
     network_external_names,
@@ -51,7 +52,7 @@ from .k8gb import add_k8gb_resources
 from .knative import add_knative_resources
 from .lbcontroller import add_lbcontroller_resources
 from .licensing import add_license_resources
-from .network import add_network_resource
+from .network import add_network_resource, resolve_subnets
 from .prelude import (
     build_manager_args,
     check_license_conflict,
@@ -220,13 +221,18 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     # Only the adopt Composition fills context.adopt; on the default Composition
     # this is an empty dict, external_names is empty, and every use is a no-op.
     adopt_ctx = context_dict.get("adopt", {})
+    # Bounds which subnet-*/rta-* keys may be discovered: an unknown one aborts
+    # the Network composition. See adopt.network_external_names.
+    network_subnets = resolve_subnets(network_param, region)
     external_names = build_external_names(
-        adopt_ctx, id_val, cluster_name, cluster_account_id, oidc_host)
+        adopt_ctx, id_val, cluster_name, cluster_account_id, oidc_host,
+        subnets=network_subnets)
 
     # --- Compose resources ---
     add_network_resource(rsp, id_val, region, provider_config, mgmt_policies,
                          network_param, config,
-                         external_names=network_external_names(external_names))
+                         external_names=network_external_names(
+                             external_names, network_subnets))
     add_eks_resource(rsp, id_val, region, provider_config, version, nodes,
                      access_config, mgmt_policies, iam_param, config,
                      naming=naming,
@@ -313,6 +319,36 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
                   license_conflict, config)
 
 
+# The adopt Composition invokes this function twice. The first invocation runs
+# ahead of the function-aws-query steps to derive their filters into the
+# context; the second composes as usual. The step's `input` says which, because
+# a function cannot otherwise tell its invocations apart.
+_PREPARE_FILTERS_KIND = "AdoptFilters"
+
+
+def prepare_adopt_filters(req: fnv1.RunFunctionRequest,
+                          rsp: fnv1.RunFunctionResponse):
+    """Write the discovery filters to context.adopt.filters.
+
+    Composes nothing; response.to already passed the desired state through.
+    Coexists with the query results landing under context.adopt later, because
+    function-aws-query sets only the leaf of its target path.
+    """
+    xr = resource.struct_to_dict(req.observed.composite.resource)
+    id_val = xr.get("spec", {}).get("parameters", {}).get("id", "")
+    filters = build_adopt_filters(id_val)
+    if not filters:
+        # Unreachable via the XRD (minLength 1 on id). Fatal rather than silent:
+        # an unresolvable filtersRef makes GetResources read the whole region.
+        response.fatal(
+            rsp, "cannot derive adopt filters: spec.parameters.id is empty")
+        return
+    context = resource.struct_to_dict(req.context) or {}
+    context.setdefault("adopt", {})["filters"] = filters
+    rsp.context.Clear()
+    rsp.context.update(context)
+
+
 class FunctionRunner(grpcv1.FunctionRunnerService):
     """Handles gRPC RunFunctionRequests for the AWS ControlPlane composition."""
 
@@ -325,7 +361,11 @@ class FunctionRunner(grpcv1.FunctionRunnerService):
     ) -> fnv1.RunFunctionResponse:
         """Build a response, run the composition, and return it."""
         log = self.log.bind(tag=req.meta.tag)
-        log.info("Running function")
         rsp = response.to(req)
+        if resource.struct_to_dict(req.input).get("kind") == _PREPARE_FILTERS_KIND:
+            log.info("Deriving adopt filters")
+            prepare_adopt_filters(req, rsp)
+            return rsp
+        log.info("Running function")
         compose(req, rsp)
         return rsp

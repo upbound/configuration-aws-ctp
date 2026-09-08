@@ -11,6 +11,14 @@ metadata:
   name: cp1
   namespace: default
 spec:
+  # REQUIRED for anything in this folder. The pipeline's bootstrap cluster is
+  # destroyed after each pass, so only the adopt Composition can find what the
+  # last run created. Without this ref the XRD default selects the plain
+  # Composition and a second run builds a second parallel stack. See README.md -
+  # including the Deprovision caveat, before relying on a decommission pass.
+  crossplane:
+    compositionRef:
+      name: controlplane-adopt.aws.platform.upbound.io
   parameters:
     id: awsctpcp1
     # REQUIRED for the pipeline: Provision (create+adopt+update, orphan) /

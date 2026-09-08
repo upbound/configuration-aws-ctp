@@ -1463,7 +1463,7 @@ CASES = [
     #
     # Rendered against the default Composition on purpose. The ctp function reads
     # context.adopt whichever Composition invoked it, so this covers exactly the
-    # same code path, while apis/ctp/compositions/adopt.yaml cannot be rendered
+    # same code path, while apis/ctp/composition-adopt.yaml cannot be rendered
     # offline at all: function-aws-query returns a fatal result when its AWS call
     # fails, so its steps need live credentials and real AWS calls even when the
     # test supplies the context they would have produced.
@@ -1611,19 +1611,14 @@ CASES = [
                                    'metadata': {'name': 'test-cp'},
                                    'spec': {'parameters': {'externalNames': {'sg': 'sg-0ecce795575a1aef7',
                                                                              'sgr-postgres': 'sgrule-2141789600'}}}}]}},
-    # The gap the DescribeSubnets step closes. The Resource Groups Tagging API returns
-    # deleted subnets alongside live ones under the same upbound.io/ctp-resource
-    # tag, so build_external_names has to refuse every private subnet as
-    # ambiguous - which is exactly what held 3 subnets unadopted through the last
-    # full provision/orphan/remanage cycle. ec2:DescribeSubnets lists only live
-    # subnets, so it settles the name and the overlay wins over the refusal.
+    # The gap DescribeSubnets closes: the Tagging API returns deleted subnets
+    # under the same tag as live ones, so the sweep must refuse them as ambiguous.
+    # The describe lists only live subnets and wins over that refusal.
     #
-    # The foreign entry carries the SAME logical name under a different
-    # upbound.io/ctp-id. That is what makes this test prove the identity scoping:
-    # without it the describe would offer two candidates, be refused as ambiguous
-    # in turn, and the asserted key would be absent rather than wrong. Rendered
-    # against the default Composition for the same reason as
-    # adopt-injects-eip-external-name above.
+    # The foreign entry carries the SAME logical name under a different ctp-id,
+    # which is what makes this prove the identity scoping - without it there are
+    # two candidates, the describe refuses them in turn, and the asserted key is
+    # absent rather than wrong.
     {'name': 'adopt-resolves-ambiguous-subnet-from-live-describe',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
@@ -1658,21 +1653,13 @@ CASES = [
                                    'kind': 'Network',
                                    'metadata': {'name': 'test-cp'},
                                    'spec': {'parameters': {'externalNames': {'subnet-us-east-1a-192-168-96-0-19-private': 'subnet-0aa11bb22cc33dd44'}}}}]}},
-    # RouteTableAssociations carry no tags and the Tagging API does not index
-    # them, so they are matched through their subnet: configuration-aws-network
-    # derives subnet-<suffix> and rta-<suffix> from one spec.parameters.subnets
-    # entry, so an association reported against a discovered subnet inherits that
-    # subnet's suffix.
+    # Associations carry no tags, so they are matched through their subnet:
+    # upstream derives subnet-<suffix> and rta-<suffix> from one subnets entry.
     #
-    # The main association is present in the same response and is deliberately
-    # NOT adopted - an adopted `mrt` cannot be deleted (see the comment in
-    # _association_external_names). rtbassoc-0112233445566778 below is that main
-    # association; the assertion proves it is skipped, because assertResources is
-    # a subset match and could not detect an extra key.
-    #
-    # rtbassoc-0999888777666555 is a disassociated association for the same
-    # subnet, listed after the live one: it must be skipped on state, not
-    # last-write-wins, or it would overwrite the value asserted below.
+    # rtbassoc-0112233445566778 is the main association, never adopted. Note this
+    # case does NOT prove that: assertResources is a subset match and cannot see
+    # an extra key. rtbassoc-0999888777666555 is disassociated and listed after
+    # the live one, so it must be skipped on state or it overwrites the assertion.
     {'name': 'adopt-derives-route-table-associations',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
@@ -1717,17 +1704,13 @@ CASES = [
                                    'metadata': {'name': 'test-cp'},
                                    'spec': {'parameters': {'externalNames': {'subnet-us-east-1a-192-168-96-0-19-private': 'subnet-0aa11bb22cc33dd44',
                                                                              'rta-us-east-1a-192-168-96-0-19-private': 'rtbassoc-0aabbccddeeff001'}}}}]}},
-    # A Route's external name is r-<route-table-id><hashcode(destination)> and
-    # nothing can discover it: routes are not taggable and no AWS API returns
-    # this identifier. Without the derivation the adopt path re-creates the
-    # default route, AWS rejects it with RouteAlreadyExists, and the XR never
-    # reaches Ready.
-    #
-    # r-rtb-066442f4ea6021c881080289494 was read off a real Route managed
-    # resource on control plane awsctpec2a (eu-central-1, 2026-09-07), not
-    # generated by this code. Note the format: the module docstring used to
-    # claim {route-table-id}_0.0.0.0/0, which is Terraform's internal ID, not
-    # the external name upjet assigns.
+    # A Route's external name is {route-table-id}_{destination}, the form upjet's
+    # aws_route GetIDFn computes from spec.forProvider. The r-<rt><hashcode> form
+    # is Terraform's INTERNAL id, set only on create - earlier versions of this
+    # test had the two backwards. Adoption depends on neither (GetIDFn ignores
+    # the annotation); the value is emitted so the rendered annotation matches
+    # what upjet writes back, since the r- form would be rewritten every
+    # reconcile. rtb-066442f4ea6021c88 came off a real MR (eu-central-1).
     {'name': 'adopt-derives-route-external-name',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
@@ -1752,20 +1735,12 @@ CASES = [
                                    'kind': 'Network',
                                    'metadata': {'name': 'test-cp'},
                                    'spec': {'parameters': {'externalNames': {'rt': 'rtb-066442f4ea6021c88',
-                                                                             'route': 'r-rtb-066442f4ea6021c881080289494'}}}}]}},
-    # Regression test pinning StringHashcode to the UNSIGNED crc32.
-    #
-    # Upstream reads as though it wraps to a signed int, and an earlier version
-    # of this code "fixed" it that way. That was measured wrong on real AWS
-    # (2026-09-07): control plane awsctpec2b's security group sg-0e6804c3dc226be29
-    # produced sgrule-3302807844 and sgrule-2392464648, BOTH above 2^31, where a
-    # wrapping implementation gives 992159452 and 1902502648. Go's `int` is
-    # 64-bit, so the negative branches upstream are dead code.
-    #
-    # These two values were read off live managed resources upjet itself created,
-    # and they sit ABOVE the 2^31 boundary - which is exactly what the earlier
-    # live vectors (sgrule-2134617159 / sgrule-897411179, both below) could not
-    # distinguish. Keep a vector on each side of the boundary.
+                                                                             'route': 'rtb-066442f4ea6021c88_0.0.0.0/0'}}}}]}},
+    # Pins StringHashcode to the UNSIGNED crc32. Upstream reads as though it
+    # wraps to a signed int and an earlier version "fixed" it that way; both
+    # values below came off live MRs and sit ABOVE 2^31, where wrapping would
+    # give 992159452 / 1902502648. The earlier vectors were all below the
+    # boundary and could not tell the two apart - keep one on each side.
     {'name': 'adopt-sg-rule-hash-is-unsigned-crc32',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
@@ -1791,4 +1766,108 @@ CASES = [
                                    'metadata': {'name': 'test-cp'},
                                    'spec': {'parameters': {'externalNames': {'sgr-postgres': 'sgrule-3302807844',
                                                                              'sgr-mysql': 'sgrule-2392464648'}}}}]}},
+    # The tag sweep is scoped to upbound.io/ctp-id, not just to the server-side
+    # filter: GetResources has no empty-filter guard, so an unresolved filtersRef
+    # reads the whole region and this check is the only boundary left.
+    #
+    # Both entries carry logical name "vpc" and differ only in ctp-id, which is
+    # what makes this discriminating: with the check the foreign one is dropped
+    # and the asserted value is unambiguous; without it both are candidates, the
+    # ambiguity guard refuses them, and the asserted key is absent.
+    {'name': 'adopt-refuses-foreign-ctp-id-in-tag-sweep',
+     'spec': {'compositionPath': 'apis/ctp/composition.yaml',
+              'xrdPath': 'apis/ctp/definition.yaml',
+              'validate': True,
+              'timeoutSeconds': 60,
+              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:vpc/vpc-0mine11223344556',
+                                                'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                         'upbound.io/ctp-resource': 'vpc'}},
+                                               {'arn': 'arn:aws:ec2:us-east-1:123456789012:vpc/vpc-0other99887766554',
+                                                'tags': {'upbound.io/ctp-id': 'other-cp',
+                                                         'upbound.io/ctp-resource': 'vpc'}}],
+                                    'subnets': [],
+                                    'routeTables': [],
+                                    'pia': []}},
+              'xr': {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                     'kind': 'ControlPlane',
+                     'metadata': {'name': 'test-cp'},
+                     'spec': {'parameters': {'id': 'test-cp',
+                                             'region': 'us-east-1',
+                                             'version': '1.34',
+                                             'managementMode': 'Provision',
+                                             'nodes': {'count': 2,
+                                                       'instanceType': 't3.small'}}}},
+              'assertResources': [{'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                                   'kind': 'Network',
+                                   'metadata': {'name': 'test-cp'},
+                                   'spec': {'parameters': {'externalNames': {'vpc': 'vpc-0mine11223344556'}}}}]}},
+    # upbound.io/ctp-resource is an ordinary AWS tag and its VALUE selects which
+    # resource an identifier lands on, so a discovered name is checked against
+    # what this configuration can emit. Here a live subnet is mis-tagged
+    # ctp-resource: vpc; the describe wins over the sweep, so without the
+    # allow-list its subnet id would overwrite the real VPC id and a duplicate
+    # VPC would be created. Asserting the correct value catches that.
+    {'name': 'adopt-ignores-mistagged-subnet-claiming-another-resource',
+     'spec': {'compositionPath': 'apis/ctp/composition.yaml',
+              'xrdPath': 'apis/ctp/definition.yaml',
+              'validate': True,
+              'timeoutSeconds': 60,
+              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:vpc/vpc-0mine11223344556',
+                                                'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                         'upbound.io/ctp-resource': 'vpc'}}],
+                                    'subnets': [{'subnetId': 'subnet-0mistagged1234',
+                                                 'state': 'available',
+                                                 'availabilityZone': 'us-east-1a',
+                                                 'cidrBlock': '192.168.96.0/19',
+                                                 'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                          'upbound.io/ctp-resource': 'vpc'}}],
+                                    'routeTables': [],
+                                    'pia': []}},
+              'xr': {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                     'kind': 'ControlPlane',
+                     'metadata': {'name': 'test-cp'},
+                     'spec': {'parameters': {'id': 'test-cp',
+                                             'region': 'us-east-1',
+                                             'version': '1.34',
+                                             'managementMode': 'Provision',
+                                             'nodes': {'count': 2,
+                                                       'instanceType': 't3.small'}}}},
+              'assertResources': [{'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                                   'kind': 'Network',
+                                   'metadata': {'name': 'test-cp'},
+                                   'spec': {'parameters': {'externalNames': {'vpc': 'vpc-0mine11223344556'}}}}]}},
+    # The route table is overlaid from the live describe like the subnets, and it
+    # matters twice over: `route` is derived from whatever `rt` ends up being.
+    # The Tagging API offers only the dead rtb-0dead11223344556, which the sweep
+    # accepts as unambiguous; the describe supplies the live one. Asserting the
+    # live id for both keys is discriminating - without the overlay both carry
+    # the dead id.
+    {'name': 'adopt-overlays-live-route-table-over-stale-tag-sweep',
+     'spec': {'compositionPath': 'apis/ctp/composition.yaml',
+              'xrdPath': 'apis/ctp/definition.yaml',
+              'validate': True,
+              'timeoutSeconds': 60,
+              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:route-table/rtb-0dead11223344556',
+                                                'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                         'upbound.io/ctp-resource': 'rt'}}],
+                                    'subnets': [],
+                                    'routeTables': [{'routeTableId': 'rtb-0live99887766554',
+                                                     'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                              'upbound.io/ctp-resource': 'rt'},
+                                                     'associations': []}],
+                                    'pia': []}},
+              'xr': {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                     'kind': 'ControlPlane',
+                     'metadata': {'name': 'test-cp'},
+                     'spec': {'parameters': {'id': 'test-cp',
+                                             'region': 'us-east-1',
+                                             'version': '1.34',
+                                             'managementMode': 'Provision',
+                                             'nodes': {'count': 2,
+                                                       'instanceType': 't3.small'}}}},
+              'assertResources': [{'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                                   'kind': 'Network',
+                                   'metadata': {'name': 'test-cp'},
+                                   'spec': {'parameters': {'externalNames': {'rt': 'rtb-0live99887766554',
+                                                                             'route': 'rtb-0live99887766554_0.0.0.0/0'}}}}]}},
 ]

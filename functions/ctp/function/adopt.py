@@ -1,39 +1,25 @@
 """11-adopt - external-name discovery for the adopt Composition.
 
-AWS assigns most resource identifiers, so a stateless bootstrap cluster holds no
-way to find the resources a previous run created. The adopt Composition
-(apis/ctp/compositions/adopt.yaml) runs function-aws-query ahead of this function
-and leaves these lists in the pipeline context:
+AWS assigns most resource identifiers, so a stateless bootstrap cluster cannot
+find what a previous run created. apis/ctp/composition-adopt.yaml derives the
+discovery filters from spec.parameters.id, runs function-aws-query, and leaves:
 
-  context.adopt.tagged      [{arn, tags}]                Resource Groups Tagging API
-  context.adopt.pia         [{identifier, properties}]   AWS::EKS::PodIdentityAssociation
-  context.adopt.subnets     [{subnetId, tags, ...}]      ec2:DescribeSubnets
+  context.adopt.tagged      [{arn, tags}]                    Tagging API
+  context.adopt.subnets     [{subnetId, tags, ...}]          ec2:DescribeSubnets
   context.adopt.routeTables [{routeTableId, associations, tags, ...}]
-                                                         ec2:DescribeRouteTables
 
-The two EC2 describes exist because the Tagging API alone is not enough. It keeps
-returning deleted resources (see _by_resource_tag), which made every private
-subnet ambiguous and therefore unadoptable, and it does not index route-table
-associations at all. An EC2 describe returns only live resources, so it resolves
-both - it is the authoritative source and overrides the tag sweep.
+build_external_names turns those into {composition-resource-name: external-name};
+apply_external_names stamps them so Crossplane observes instead of creating.
 
-build_external_names turns them, plus the identifiers that are derivable without
-any query, into a {composition-resource-name: external-name} map.
-apply_external_names stamps it onto the desired resources. Crossplane then
-observes the existing AWS object instead of creating a duplicate.
+Both sources are needed: the Tagging API covers every taggable type but keeps
+returning deleted resources, which makes a logical name ambiguous. An EC2
+describe returns only live resources and carries route-table associations, which
+nothing else indexes, so it wins for the two types it covers.
 
-Three identifiers need no query at all:
-  Route                  r-{route-table-id}{hashcode(destination)}, the form
-                         upjet assigns on create. The provider canonicalises the
-                         annotation to {route-table-id}_{destination} once it has
-                         observed the route; both forms are accepted for
-                         adoption (measured on real AWS, 2026-09-07).
-  OpenIDConnectProvider  arn:aws:iam::{acct}:oidc-provider/{oidc-host}
-  RolePolicyAttachment   {role-name}/{policy-arn}
-
-A fourth cannot be queried at all: SecurityGroupRule's external-name is a
-Terraform-computed crc32 of the rule signature, so it is computed here from the
-tag-discovered security group id (see sgrule_external_name).
+Everything read out of the context is untrusted. upbound.io/ctp-resource is an
+ordinary AWS tag and its value picks which resource an identifier lands on, so
+every entry is checked against this XR's upbound.io/ctp-id and against the set of
+logical names this configuration can emit. Ambiguity is refused, never guessed.
 """
 
 import zlib
@@ -41,43 +27,56 @@ import zlib
 from crossplane.function import resource
 
 
-# The two database ingress rules configuration-aws-network composes, keyed by
-# their krm.kcl.dev/composition-resource-name. Mirrored from its
-# functions/network/main.k - if upstream changes a port, protocol or CIDR the
-# derived hash below stops matching. That failure is loud, not silent: Crossplane
-# attempts a create and AWS returns InvalidPermission.Duplicate.
+# Mirrored from configuration-aws-network functions/network/main.k:278-322.
+# Drift is SILENT: terraform-provider-aws matches a rule by re-expanding its own
+# spec, not by the id, so a wrong hash still adopts. Only NON-EMPTINESS matters -
+# an empty external-name means "absent", so Crossplane creates and AWS returns
+# InvalidPermission.Duplicate. Kept exact anyway so the annotation matches what
+# upjet would have written.
 _LEGACY_SG_RULES = {
     "sgr-postgres": (5432, 5432, "tcp", "ingress", ["0.0.0.0/0"]),
     "sgr-mysql": (3306, 3306, "tcp", "ingress", ["0.0.0.0/0"]),
 }
 
 
-# The single default route configuration-aws-network composes, mirrored from its
-# functions/network/main.k:228 - see the _LEGACY_SG_RULES note above, the same
-# cross-repo coupling applies.
+# Mirrored from main.k:228. Must be written as {route-table-id}_{destination}:
+# upjet's aws_route GetIDFn rebuilds the id from spec.forProvider and ignores the
+# annotation, so any other form is rewritten on every reconcile forever. The
+# r-{rt}{hashcode} form is Terraform's internal id, set only on create.
 _ROUTE_DESTINATION = "0.0.0.0/0"
+
+# The only logical name the route-table describe may supply. `mrt` is the
+# MainRouteTableAssociation, never adopted (see _association_external_names).
+_ROUTE_TABLE_KEYS = frozenset({"rt"})
+
+_CTP_ID_TAG = "upbound.io/ctp-id"
+
+
+def build_adopt_filters(id_val: str) -> dict:
+    """Discovery filters for the three queries, derived from `id`.
+
+    The two APIs need different shapes for one intent: a Tagging-API TagFilter
+    Key is a bare tag key, an EC2 Filter Name comes from a fixed vocabulary where
+    tags are "tag:<key>". Derived rather than configured so a filter that does
+    not scope to this control plane cannot be written at all.
+    """
+    if not id_val:
+        return {}
+    return {
+        "tagged": [{"name": _CTP_ID_TAG, "values": [id_val]}],
+        "ec2": [{"name": "tag:" + _CTP_ID_TAG, "values": [id_val]}],
+    }
 
 
 def _string_hashcode(s: str) -> int:
     """Terraform's create.StringHashcode: the unsigned crc32, unmodified.
 
-    Upstream reads as though it wraps to a signed int:
-
-        v := int(crc32.ChecksumIEEE([]byte(s)))
-        if v >= 0 { return v }
-        if -v >= 0 { return -v }
-
-    It does not. Go's `int` is 64-bit on every platform this runs on, so a
-    uint32 up to 4294967295 is always positive and returned as-is; the negative
-    branches are dead code left over from 32-bit builds. Do not "fix" this to
-    wrap at 2^31 - that was tried, and measured wrong against live AWS
-    2026-09-07: real rules came back as sgrule-3302807844 and sgrule-2392464648,
-    both above 2^31, where a wrapped implementation gives 992159452 and
-    1902502648.
-
-    Verified on both sides of the 2^31 boundary against values upjet itself
-    created: sgrule-2134617159 / sgrule-897411179 / r-rtb-...1080289494 below,
-    sgrule-3302807844 / sgrule-2392464648 above.
+    Upstream looks like it wraps to a signed int, but Go's `int` is 64-bit on
+    both published platforms, so a uint32 widens and is returned as-is. Do NOT
+    "fix" this to wrap at 2^31 - that was tried and measured wrong on live AWS:
+    real rules came back sgrule-3302807844 / sgrule-2392464648, where wrapping
+    gives 992159452 / 1902502648. Keep a test vector on each side of 2^31; the
+    earlier ones were all below it and could not tell the two apart.
     """
     return zlib.crc32(s.encode()) & 0xffffffff
 
@@ -85,17 +84,12 @@ def _string_hashcode(s: str) -> int:
 def sgrule_external_name(sg_id: str, from_port: int, to_port: int,
                          protocol: str, rule_type: str,
                          cidrs: list) -> str:
-    """Terraform's aws_security_group_rule id: a crc32 of the rule signature.
+    """Terraform's aws_security_group_rule id: crc32 of the rule signature.
 
-    Mirrors securityGroupRuleCreateID in terraform-provider-aws
-    internal/service/ec2/vpc_security_group_rule.go, hashed with StringHashcode
-    from internal/create/hashcode.go. No AWS API exposes this value - it is a
-    Terraform state key, not an AWS identifier - so it is computed rather than
-    discovered. A port is written into the buffer only when greater than zero,
-    matching upstream's two conditionals.
-
-    Verified exactly against a live probe: sg-0ecce795575a1aef7 / 5432 / tcp /
-    ingress / 0.0.0.0/0 -> sgrule-2141789600.
+    Mirrors securityGroupRuleCreateID (vpc_security_group_rule.go). No AWS API
+    exposes it. Ports are written only when > 0, and the ipv6/prefix-list/
+    user-id-group-pair fields upstream appends are each guarded by len > 0 with
+    no empty marker, so omitting them here is byte-identical for these rules.
     """
     buf = f"{sg_id}-"
     if from_port > 0:
@@ -109,37 +103,49 @@ def sgrule_external_name(sg_id: str, from_port: int, to_port: int,
 
 
 def arn_identifier(arn: str) -> str:
-    """The AWS identifier carried by an ARN.
-
-    Tagging-API ARNs put the identifier last, after either a slash
-    (arn:aws:ec2:r:a:vpc/vpc-0abc) or a colon
-    (arn:aws:eks:r:a:cluster/name). Take the final slash- or colon-delimited
-    segment, whichever comes later.
-    """
+    """The identifier an ARN carries: its last slash- or colon-delimited segment."""
     if not arn:
         return ""
     tail = arn.rsplit("/", 1)[-1]
     return tail.rsplit(":", 1)[-1]
 
 
-def _by_resource_tag(tagged: list) -> dict:
-    """Index the Tagging-API result by the upbound.io/ctp-resource tag.
+def _format_subnet(entry: dict) -> str:
+    """One subnets entry -> the suffix upstream derives its names from.
 
-    Returns {logical: [identifier, ...]} - a LIST, not a single value, because
-    the Resource Groups Tagging API keeps returning deleted resources and they
-    carry the same upbound.io/ctp-resource tag as their live replacements.
+    Mirrors configuration-aws-network main.k:66-68. Published API: the Network
+    XRD documents its keys as subnet-<az>-<cidr>-<type> / rta-<same>. Mirrored to
+    validate only - see network_external_names for why that direction matters.
+    """
+    cidr = str(entry.get("cidrBlock") or "").replace(".", "-").replace("/", "-")
+    return "{}-{}-{}".format(
+        entry.get("availabilityZone") or "", cidr, entry.get("type") or "")
 
-    Measured 2026-09-03 on control plane awsctpcp1: GetResources returned 16
-    entries where only 10 resources existed; 6 were deleted subnets, and two
-    entries shared the tag subnet-eu-central-1a-192-168-96-0-19-private - one
-    live, one gone. A last-write-wins dict would silently pick whichever came
-    last in pagination order, and injecting a dead identifier makes Crossplane
-    observe nothing and create a duplicate. So collect every candidate and let
-    the caller resolve which is live.
+
+def _subnet_suffixes(subnets: list) -> frozenset:
+    return frozenset(_format_subnet(entry) for entry in subnets or [])
+
+
+def _by_resource_tag(tagged: list, ctp_id: str) -> dict:
+    """Index the Tagging-API result by upbound.io/ctp-resource, scoped to ctp_id.
+
+    Returns a LIST per logical name: the Tagging API keeps returning deleted
+    resources under the same tag as their live replacement and tag data cannot
+    tell them apart (measured: 16 entries for 10 live resources).
+
+    The identity check is not redundant with the server-side filter. Unlike the
+    EC2 describes, GetResources has no empty-filter guard, so an unresolvable
+    filtersRef reads the whole region and this is the only boundary left - and
+    one foreign control plane then makes its VPC the sole, unambiguous candidate
+    for "vpc".
     """
     out = {}
+    if not ctp_id:
+        return out
     for entry in tagged or []:
         tags = entry.get("tags") or {}
+        if tags.get(_CTP_ID_TAG) != ctp_id:
+            continue
         logical = tags.get("upbound.io/ctp-resource")
         identifier = arn_identifier(entry.get("arn", ""))
         if logical and identifier:
@@ -147,194 +153,159 @@ def _by_resource_tag(tagged: list) -> dict:
     return out
 
 
-def _live_by_resource_tag(entries: list, id_field: str, ctp_id: str) -> dict:
-    """Index a direct EC2 describe result by its upbound.io/ctp-resource tag.
+def _live_by_resource_tag(entries: list, id_field: str, ctp_id: str,
+                          allowed: frozenset) -> dict:
+    """Index an EC2 describe by upbound.io/ctp-resource. Ambiguity is refused.
 
-    Scoped to this control plane's identity tag. The describe is already filtered
-    server-side by spec.parameters.adopt.ec2Filters, but that filter is
-    caller-supplied: an absent one makes the call region-wide, so the identity
-    check is what actually keeps another control plane's resources out.
+    Scoped by identity (the server-side filter is a scope, not a boundary) and by
+    `allowed`, because the tag value is writable by anyone with ec2:CreateTags -
+    without it a subnet tagged ctp-resource=vpc has its id injected as the VPC's
+    external name and a duplicate VPC is created. `allowed` also guarantees the
+    prefix callers assume. An empty ctp_id indexes nothing; an identity check
+    must not fail open.
 
-    Ambiguity is still refused, for the reason _by_resource_tag explains - but
-    here two candidates mean two *live* resources carrying one logical name,
-    i.e. a duplicate a previous run already created. Adopting either one leaves
-    the other stranded, so report nothing and let the create fail loudly.
+    Two candidates here are two *live* resources under one name - a duplicate an
+    earlier run created, where adopting either strands the other.
     """
     out = {}
+    if not ctp_id:
+        return out
     for entry in entries or []:
         tags = entry.get("tags") or {}
-        if ctp_id and tags.get("upbound.io/ctp-id") != ctp_id:
+        if tags.get(_CTP_ID_TAG) != ctp_id:
             continue
         logical = tags.get("upbound.io/ctp-resource")
         identifier = entry.get(id_field)
-        if logical and identifier:
-            out.setdefault(logical, []).append(identifier)
+        if not logical or not identifier or logical not in allowed:
+            continue
+        out.setdefault(logical, []).append(identifier)
     return {k: v[0] for k, v in out.items() if len(v) == 1}
 
 
-def _association_external_names(route_tables: list, subnets: dict) -> dict:
+def _association_external_names(route_tables: list, subnets: dict,
+                                ctp_id: str) -> dict:
     """Map rta-<suffix> to its live RouteTableAssociation id.
 
-    Associations carry no tags of their own and the Tagging API does not index
-    them, so they are matched through their subnet. configuration-aws-network
-    names a subnet subnet-<suffix> and its association rta-<suffix> from the same
-    spec.parameters.subnets entry (functions/network/main.k:100,178), so the
-    association AWS reports against a discovered subnet inherits that subnet's
-    suffix.
-
-    `subnets` is the {logical: subnetId} map _live_by_resource_tag produced, so
-    only subnets that belong to this control plane and are unambiguous can
-    contribute an association.
+    Associations carry no tags and the Tagging API does not index them, so they
+    are matched through their subnet: upstream derives subnet-<suffix> and
+    rta-<suffix> from one subnets entry (main.k:146,178). `subnets` is the
+    already-validated {logical: subnetId} map, which is what makes the prefix
+    strip below safe.
     """
     by_subnet_id = {v: k for k, v in (subnets or {}).items()}
     out = {}
     for rt in route_tables or []:
-        rt_logical = (rt.get("tags") or {}).get("upbound.io/ctp-resource")
+        # A foreign or operator-added (e.g. NAT) route table can own one of our
+        # subnets' associations, and adopting it is not inert: route_table_id is
+        # not ForceNew and Update calls ReplaceRouteTableAssociation, so the next
+        # reconcile silently repoints that subnet at our IGW-default table and it
+        # loses NAT egress. Un-adopted it failed loudly instead.
+        if (rt.get("tags") or {}).get(_CTP_ID_TAG) != ctp_id:
+            continue
         for assoc in rt.get("associations") or []:
-            # An association mid-transition or already gone must not be adopted.
-            # An empty state is accepted: AssociationState is absent on older
-            # API responses rather than meaning "not associated".
+            # States are associating/associated/disassociating/disassociated/
+            # failed. Empty is accepted because function-aws-query emits "" only
+            # when AWS omits AssociationState, which old responses do.
             if (assoc.get("state") or "associated") != "associated":
                 continue
             assoc_id = assoc.get("routeTableAssociationId")
             if not assoc_id:
                 continue
-            # The main association is deliberately NOT adopted, even though it
-            # is right here and `mrt` is a valid key. aws_main_route_table_association
-            # deletes by calling ReplaceRouteTableAssociation to restore
-            # original_route_table_id - a create-time-only field that AWS never
-            # returns, so adoption cannot populate it and LateInitialize cannot
-            # recover it. Measured on real AWS 2026-09-07: an adopted `mrt` fails
-            # to delete with
-            #   ReplaceRouteTableAssociation ... MissingParameter: The request
-            #   must contain the parameter routeTableId
-            # and its finalizer then blocks the route table and the VPC, needing
-            # manual repair. Leaving it unadopted lets Crossplane re-issue the
-            # association, which records an original it can restore, so the MR at
-            # least deletes cleanly. See the Deprovision caveat in
-            # controlplanes/README.md.
+            # An adopted `mrt` cannot be deleted: it restores
+            # original_route_table_id, which AWS never returns (status-only on
+            # the CRD). Redundant in practice - AWS reports no subnet id for an
+            # implicit association, so the join below cannot match one - but kept
+            # so the intent survives a change to that join. Skipping it does NOT
+            # make teardown clean; see controlplanes/README.md.
             if assoc.get("main"):
                 continue
             subnet_logical = by_subnet_id.get(assoc.get("subnetId"))
-            if subnet_logical:
-                out["rta-" + subnet_logical[len("subnet-"):]] = assoc_id
-    return out
+            if not subnet_logical:
+                continue
+            out.setdefault(
+                "rta-" + subnet_logical[len("subnet-"):], []).append(assoc_id)
+    # Refuse an ambiguous key, as everywhere else. AWS allows one association per
+    # subnet, but DescribeRouteTables is paginated, so a read straddling a
+    # ReplaceRouteTableAssociation can return both the old and the new one.
+    return {k: v[0] for k, v in out.items() if len(v) == 1}
 
 
 def build_external_names(adopt_ctx: dict, id_val: str, cluster_name: str,
-                         account_id: str, oidc_host: str) -> dict:
+                         account_id: str, oidc_host: str,
+                         subnets: list = None) -> dict:
     """Map composition-resource-name to the external name to inject.
 
-    Only resources this configuration owns are keyed here. The leaves owned by
-    configuration-aws-network and configuration-aws-eks are handed the same map
-    through their XRs' externalNames parameter (see network.py / eks.py).
+    Only resources this configuration owns are keyed here; the network and EKS
+    leaves receive their subsets through their XRs' externalNames parameter.
+    `subnets` is the list the Network XR will get, and it bounds which
+    subnet-*/rta-* names may be discovered at all.
     """
     adopt_ctx = adopt_ctx or {}
+    subnet_keys = frozenset(
+        "subnet-" + suffix for suffix in _subnet_suffixes(subnets))
 
-    # Take a tag-discovered identifier only when it is unambiguous. Where the
-    # Tagging API offered several candidates for one logical resource, at least
-    # one is a deleted resource still indexed (see _by_resource_tag), and there
-    # is no way to tell which from tag data alone - so inject nothing and let
-    # Crossplane create. A duplicate is bad; adopting a dead identifier is the
-    # same duplicate plus a confusing error, so ambiguity must not be guessed.
-    #
-    # For subnets and route tables the ambiguity is now settled by the EC2
-    # describes overlaid below; this guard still covers every other taggable
-    # type, which has no authoritative query wired.
+    # Unambiguous tag hits only. A dead identifier is the duplicate adoption
+    # exists to prevent, plus a confusing error, so ambiguity injects nothing.
     names = {}
-    for logical, candidates in _by_resource_tag(adopt_ctx.get("tagged")).items():
+    for logical, candidates in _by_resource_tag(
+            adopt_ctx.get("tagged"), id_val).items():
         if len(candidates) == 1:
             names[logical] = candidates[0]
 
-    # Authoritative overlay, and the whole reason the discover-subnets and
-    # discover-route-tables steps exist. An EC2 describe lists only live
-    # resources, so it settles the logical names the sweep above had to refuse
-    # and supplies the associations the Tagging API never indexed. It wins over
-    # the sweep wherever both have an answer.
+    # Live overlay: settles what the sweep had to refuse, and supplies the
+    # associations nothing indexes. The route table matters twice over, because
+    # `route` is derived from whatever `rt` ends up being.
     live_subnets = _live_by_resource_tag(
-        adopt_ctx.get("subnets"), "subnetId", id_val)
+        adopt_ctx.get("subnets"), "subnetId", id_val, subnet_keys)
     names.update(live_subnets)
+    names.update(_live_by_resource_tag(
+        adopt_ctx.get("routeTables"), "routeTableId", id_val,
+        _ROUTE_TABLE_KEYS))
     names.update(_association_external_names(
-        adopt_ctx.get("routeTables"), live_subnets))
+        adopt_ctx.get("routeTables"), live_subnets, id_val))
 
-    # The derived entries below are gated on adopt_ctx, i.e. on the adopt
-    # Composition having run its discovery steps. They need no query - they are
-    # computed from the account id and the cluster's OIDC host - so it is
-    # tempting to emit them unconditionally. Do not.
-    #
-    # On the default Composition adopt_ctx is {} and nothing must be injected:
-    # every existing consumer would otherwise gain a crossplane.io/external-name
-    # on its OpenIDConnectProvider and RolePolicyAttachment where it previously
-    # had none. If either derivation is off by a character, that consumer
-    # observes nothing and creates a duplicate - a second OIDC provider breaks
-    # IRSA. The upside is nil, because the default path never adopts.
+    # Gate the derivations below on adopt_ctx. They need no query, so emitting
+    # them unconditionally is tempting - but on the default Composition every
+    # existing consumer would gain an external-name it never had, and an
+    # off-by-one derivation there means a duplicate OIDC provider, which breaks
+    # IRSA. The default path never adopts, so the upside is nil.
     if not adopt_ctx:
         return {k: v for k, v in names.items() if v}
 
-    # Derived: the security group's own id is discovered by tag above; the two
-    # legacy rule hashes derive from it plus upstream's fixed rule signatures.
-    # No-op when the tag sweep found no unambiguous security group.
     sg_id = names.get("sg")
     if sg_id:
         for logical, (fp, tp, proto, rtype, cidrs) in _LEGACY_SG_RULES.items():
             names[logical] = sgrule_external_name(
                 sg_id, fp, tp, proto, rtype, cidrs)
 
-    # Derived: a Route's external name, built from the tag-discovered route
-    # table. Nothing can discover it - routes are not taggable and no AWS API
-    # returns this identifier - so without this the adopt path re-creates the
-    # default route, AWS rejects it with RouteAlreadyExists, and the XR never
-    # reaches Ready. Verified adopting a live route on real AWS 2026-09-07:
-    # this value observes the existing route, after which the provider rewrites
-    # the annotation to its canonical {rt}_{destination} form. That rewrite is
-    # a one-off - apply_external_names never overwrites an annotation that is
-    # already set - so it does not flap.
+    # Routes are not taggable and no API returns this id. Adoption does not
+    # actually depend on it (upjet ignores the annotation) - it is emitted so the
+    # rendered annotation matches the one upjet writes back.
     rt_id = names.get("rt")
     if rt_id:
-        names["route"] = f"r-{rt_id}{_string_hashcode(_ROUTE_DESTINATION)}"
+        names["route"] = f"{rt_id}_{_ROUTE_DESTINATION}"
 
-    # Derived: the OIDC provider's Terraform ID is its ARN, which fn.py already
-    # computes from the cluster's OIDC issuer host and the account ID.
     if account_id and oidc_host:
         names["oidc-provider"] = (
             f"arn:aws:iam::{account_id}:oidc-provider/{oidc_host}"
         )
 
-    # Derived: a role-policy attachment is imported as role-name/policy-arn, and
-    # both halves are deterministic names this configuration chose.
     if account_id:
         names["backup-policy-attachment"] = (
             f"{id_val}-backup-irsa/arn:aws:iam::{account_id}:policy/{id_val}-backup-s3"
         )
 
-    # Pod Identity associations have an opaque identifier ("a-" + 17 chars) and
-    # can arrive from either source, so take whichever supplied it. The tag
-    # sweep already populated `names` if the Tagging API indexes the type; this
-    # only fills the gap when it does not. Matched on cluster + service account
-    # because the identifier itself carries no meaning.
-    for entry in adopt_ctx.get("pia") or []:
-        props = entry.get("properties") or {}
-        if props.get("ClusterName") != cluster_name:
-            continue
-        sa = props.get("ServiceAccount")
-        logical = {
-            "aws-load-balancer-controller": "lb-controller-pia",
-            "ebs-csi-controller-sa": "ebsCSIDriverPodIdentityAssociation",
-        }.get(sa)
-        if logical and not names.get(logical):
-            names[logical] = entry.get("identifier", "")
-
+    # Pod Identity associations arrive through the tag sweep, via the
+    # eks:podidentityassociation entry in resourceTypeFilters. There is
+    # deliberately no second source: an earlier design read them from a Cloud
+    # Control step that was dropped, and the reader outlived the producer.
     return {k: v for k, v in names.items() if v}
 
 
-# Each sub-configuration validates the keys it is handed and rejects unknown
-# ones outright (configuration-aws-network and -aws-eks both assert on this), so
-# the combined map must be split before it is forwarded. Sending the whole thing
-# aborts the sub-XR's composition:
-#   pipeline step "eks" returned a fatal result: EvaluationError
-#   assert len(_unknownExternalNames) == 0
-# Keys not listed here belong to resources this configuration composes itself and
-# are applied locally by apply_external_names, never forwarded.
+# Each sub-configuration rejects unknown externalNames keys outright, aborting
+# its own composition, so the map must be split before it is forwarded. Keys
+# absent from both sets belong to resources composed here and are applied
+# locally by apply_external_names.
 _NETWORK_KEYS = frozenset({
     "vpc", "igw", "rt", "route", "mrt", "sg", "sgr-postgres", "sgr-mysql",
 })
@@ -347,20 +318,34 @@ _EKS_KEYS = frozenset({
 })
 
 
-def network_external_names(external_names: dict) -> dict:
-    """The subset configuration-aws-network composes. Subnet and route-table
-    association names are derived from the caller's own subnet list, so they are
-    matched by prefix rather than enumerated."""
+def network_external_names(external_names: dict, subnets: list = None) -> dict:
+    """The subset configuration-aws-network composes.
+
+    Subnet and association names depend on the caller's subnet list, so they are
+    validated against it rather than enumerated. Forwarding a subnet-*/rta-* key
+    outside that set aborts the Network composition and takes the VPC, every
+    subnet and the route table with it - and a subnet orphaned by an earlier
+    layout is the expected steady state, since Provision/ObserveOnly never
+    delete. Dropping the key instead costs one unadopted subnet, which is also
+    why _format_subnet is mirrored rather than trusted.
+    """
+    accepted = frozenset(
+        f"{prefix}-{suffix}"
+        for suffix in _subnet_suffixes(subnets)
+        for prefix in ("subnet", "rta")
+    )
     return {
         k: v for k, v in (external_names or {}).items()
-        if k in _NETWORK_KEYS or k.startswith("subnet-") or k.startswith("rta-")
+        if k in _NETWORK_KEYS or k in accepted
     }
 
 
 def eks_external_names(external_names: dict) -> dict:
-    """The subset configuration-aws-eks composes. The AccessEntry and
-    AccessPolicyAssociation names are sha256 digests, so anything not otherwise
-    recognised and not a network key is passed through for it to validate."""
+    """The subset configuration-aws-eks composes.
+
+    A strict allow-list. The sha256-digest AccessEntry names are dropped, not
+    passed through, so they are not adoptable - nothing discovers them either.
+    """
     return {
         k: v for k, v in (external_names or {}).items()
         if k in _EKS_KEYS
@@ -368,11 +353,10 @@ def eks_external_names(external_names: dict) -> dict:
 
 
 def apply_external_names(rsp, external_names: dict) -> None:
-    """Stamp crossplane.io/external-name on every desired resource whose
-    composition-resource-name appears in the map.
+    """Stamp crossplane.io/external-name on matching desired resources.
 
     An annotation already present wins: backup.py sets the Bucket's from the
-    location ARN and must not be second-guessed here.
+    location ARN and must not be second-guessed.
     """
     if not external_names:
         return

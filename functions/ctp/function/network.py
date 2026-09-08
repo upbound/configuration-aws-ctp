@@ -21,10 +21,17 @@ def _default_subnets(region):
     return subnets
 
 
+def resolve_subnets(network_param, region):
+    """The subnet list the Network XR will receive: the caller's own, or the
+    default. Resolved here because adopt.py needs the same list to know which
+    subnet-*/rta-* externalNames keys the Network will accept."""
+    return network_param.get("subnets") or _default_subnets(region)
+
+
 def add_network_resource(rsp, id_val, region, provider_config, mgmt_policies,
                          network_param, config, external_names=None):
     vpc_cidr = network_param.get("vpcCidrBlock", "192.168.0.0/16")
-    subnets = network_param.get("subnets") or _default_subnets(region)
+    subnets = resolve_subnets(network_param, region)
     network = {
         "apiVersion": "aws.platform.upbound.io/v1alpha1",
         "kind": "Network",

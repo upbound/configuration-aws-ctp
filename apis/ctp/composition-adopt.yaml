@@ -1,6 +1,9 @@
 # Adopt variant of the ControlPlane Composition, for the dynamic-provisioning
-# pipeline. Identical to controlplane.aws.platform.upbound.io except for the three
-# function-aws-query discovery steps ahead of the ctp step.
+# pipeline. Identical to controlplane.aws.platform.upbound.io except for the
+# discovery steps ahead of ctp: one derives the filters, three query AWS.
+#
+# Takes no extra XR configuration - opt in with
+# spec.crossplane.compositionRef.name and everything else comes from `id`.
 #
 # Why a separate Composition and not a flag on the default one: function-aws-query
 # reads its credentials from the pipeline step's `credentials` block, which is
@@ -37,6 +40,20 @@ spec:
             maxMatch: 100
             minMatch: 0
 
+  # Derives the queries' filters from spec.parameters.id, so no filter is
+  # operator-supplied: a filter that does not scope to this control plane is the
+  # one input that could make discovery return another one's resources. The two
+  # APIs need different shapes for it - see build_adopt_filters in adopt.py.
+  #
+  # The ctp function in a mode its `input` selects; emits no resources. Separate
+  # step because filtersRef is resolved when the query step runs.
+  - functionRef:
+      name: upbound-configuration-aws-ctpctp
+    step: prepare-adopt-filters
+    input:
+      apiVersion: ctp.fn.crossplane.io/v1alpha1
+      kind: AdoptFilters
+
   # Everything taggable, in one server-side tag-filtered call. Returns
   # [{arn, tags}]; the AWS identifier is the last segment of the ARN. Covers VPC,
   # subnets, internet gateway, route table, security group and the k8gb EIPs.
@@ -48,7 +65,7 @@ spec:
       kind: Input
       queryType: GetResources
       regionRef: spec.parameters.region
-      filtersRef: spec.parameters.adopt.tagFilters
+      filtersRef: context.adopt.filters.tagged
       parameters:
         resourceTypeFilters: "ec2:vpc,ec2:subnet,ec2:internet-gateway,ec2:route-table,ec2:security-group,ec2:elastic-ip,eks:podidentityassociation"
       target: context.adopt.tagged
@@ -64,12 +81,9 @@ spec:
   # resource, and DescribeRouteTables carries each route table's associations,
   # which no tag-based or Cloud Control query exposes at all.
   #
-  # Both are scoped by spec.parameters.adopt.ec2Filters, which takes native EC2
-  # filter names - a tag filter is "tag:upbound.io/ctp-id", not the bare tag key
-  # tagFilters uses above. function-aws-query rejects an empty filter set rather
-  # than reading the whole region, so a missing ec2Filters fails loudly here;
-  # build_external_names still re-checks the identity tag on every entry, so an
-  # over-broad filter cannot cross-adopt either.
+  # Both scoped by context.adopt.filters.ec2. These two refuse an empty filter
+  # set rather than reading the region; GetResources above does not, which is why
+  # build_external_names re-checks the identity tag on every entry regardless.
   - functionRef:
       name: upbound-function-aws-query
     step: discover-subnets
@@ -78,7 +92,7 @@ spec:
       kind: Input
       queryType: DescribeSubnets
       regionRef: spec.parameters.region
-      filtersRef: spec.parameters.adopt.ec2Filters
+      filtersRef: context.adopt.filters.ec2
       target: context.adopt.subnets
     credentials:
     - name: aws-creds
@@ -87,10 +101,8 @@ spec:
         namespace: default
         name: aws-creds
 
-  # Route tables come along for the ride: the target of this step is the
-  # associations, matched to their subnets by build_external_names. It runs
-  # after discover-subnets only for readability - there is no data dependency,
-  # both read the same filter off the XR spec.
+  # The target here is really the associations, which build_external_names
+  # matches to their subnets. No data dependency on discover-subnets.
   - functionRef:
       name: upbound-function-aws-query
     step: discover-route-tables
@@ -99,7 +111,7 @@ spec:
       kind: Input
       queryType: DescribeRouteTables
       regionRef: spec.parameters.region
-      filtersRef: spec.parameters.adopt.ec2Filters
+      filtersRef: context.adopt.filters.ec2
       target: context.adopt.routeTables
     credentials:
     - name: aws-creds
@@ -108,33 +120,19 @@ spec:
         namespace: default
         name: aws-creds
 
-  # The two database SecurityGroupRules are NOT discovered here. Their
-  # external-name is Terraform's sgrule-<crc32> hash, not an AWS identifier, so
-  # DescribeSecurityGroupRules cannot supply it - adopt.py derives it instead
-  # (see sgrule_external_name). It could still supply the live rule signature
-  # the hash is computed from, replacing the constants mirrored from
-  # configuration-aws-network, but DescribeSecurityGroupRules can only be scoped
-  # by group-id: aws_security_group_rule carries no tags, so tag:upbound.io/ctp-id
-  # matches nothing. The group id is discovered by the sweep above and is
-  # therefore not available as a static filter in this Composition. Until that
-  # is solved the hash stands, and its inputs stay mirrored by hand.
+  # The two database SecurityGroupRules are NOT discovered: their external-name
+  # is Terraform's sgrule-<crc32>, which no API returns, so adopt.py derives it.
+  # DescribeSecurityGroupRules could supply the signature the hash is built from
+  # (replacing the mirrored constants) but scopes only by group-id, which is
+  # itself discovered above - so it cannot be a static filter here.
 
-  # discover-assoc REMOVED. AWS::EC2::SubnetRouteTableAssociation cannot be
-  # listed safely in a shared account. ListResources enumerates EVERY
-  # association in the account and hydration calls GetResource on each one, so a
-  # single foreign or main-route-table association aborts the whole composition -
-  # function-aws-query returns a FATAL result on any error:
-  #   InvalidRequestException: AWS::EC2::SubnetRouteTableAssociation Handler
-  #   returned status FAILED: The RouteTableAssociation does not belong to a subnet
-  # hydrate=false would avoid the GetResource calls but returns identifiers only,
-  # with no SubnetId/RouteTableId to map an association to its logical name, so it
-  # buys nothing.
-  #
-  # Closed by discover-route-tables above: ec2:DescribeRouteTables returns each
-  # route table with its associations inline, so there is nothing to enumerate
-  # account-wide and nothing to hydrate. Kept as a record of why Cloud Control
-  # is not the answer here - the lesson generalises to any hydrated
-  # ListResources call in a shared account.
+  # discover-assoc REMOVED, closed by discover-route-tables above.
+  # AWS::EC2::SubnetRouteTableAssociation cannot be listed safely in a shared
+  # account: ListResources enumerates every association and hydration
+  # GetResources each one, so one foreign or main association aborts the whole
+  # composition. hydrate=false returns identifiers with no SubnetId to map them
+  # by. The lesson generalises to any hydrated ListResources in a shared
+  # account.
 
   - functionRef:
       name: upbound-configuration-aws-ctpctp
