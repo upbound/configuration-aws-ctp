@@ -110,6 +110,18 @@ def arn_identifier(arn: str) -> str:
     return tail.rsplit(":", 1)[-1]
 
 
+def _pia_cluster(arn: str) -> str:
+    """The cluster segment of an EKS Pod Identity Association ARN.
+
+    arn:aws:eks:<region>:<acct>:podidentityassociation/<cluster>/<assoc-id>
+    Empty string for any other ARN shape.
+    """
+    marker = ":podidentityassociation/"
+    if marker not in arn:
+        return ""
+    return arn.split(marker, 1)[1].split("/", 1)[0]
+
+
 def _format_subnet(entry: dict) -> str:
     """One subnets entry -> the suffix upstream derives its names from.
 
@@ -126,7 +138,7 @@ def _subnet_suffixes(subnets: list) -> frozenset:
     return frozenset(_format_subnet(entry) for entry in subnets or [])
 
 
-def _by_resource_tag(tagged: list, ctp_id: str) -> dict:
+def _by_resource_tag(tagged: list, ctp_id: str, cluster_name: str = "") -> dict:
     """Index the Tagging-API result by upbound.io/ctp-resource, scoped to ctp_id.
 
     Returns a LIST per logical name: the Tagging API keeps returning deleted
@@ -147,7 +159,27 @@ def _by_resource_tag(tagged: list, ctp_id: str) -> dict:
         if tags.get(_CTP_ID_TAG) != ctp_id:
             continue
         logical = tags.get("upbound.io/ctp-resource")
-        identifier = arn_identifier(entry.get("arn", ""))
+        arn = entry.get("arn", "")
+        identifier = arn_identifier(arn)
+        # A Pod Identity Association belongs to one cluster, and its ARN says
+        # which - so adopting one from another cluster is wrong whether or not it
+        # still exists. Checking it also removes the stale entries that otherwise
+        # make this logical name ambiguous: measured 2026-09-09, the tag index
+        # held 6 associations for one name where only 1 was live, the other 5
+        # belonging to clusters long deleted. Ambiguity meant no external-name,
+        # so Crossplane created and AWS answered
+        # 409 ResourceInUseException: Association already exists - wedged both
+        # ways, and it blocks configuration-aws-eks's readiness sequence, so the
+        # whole control plane never converges.
+        #
+        # Only applied once the cluster name is known - it arrives from the EKS
+        # XR status a reconcile later. Until then this falls through to the
+        # ambiguity guard, which refuses anyway whenever phantoms exist, so the
+        # real behaviour is the same: refused on the first reconcile, adopted on
+        # the next.
+        pia_cluster = _pia_cluster(arn)
+        if cluster_name and pia_cluster and pia_cluster != cluster_name:
+            continue
         if logical and identifier:
             out.setdefault(logical, []).append(identifier)
     return out
@@ -248,7 +280,7 @@ def build_external_names(adopt_ctx: dict, id_val: str, cluster_name: str,
     # exists to prevent, plus a confusing error, so ambiguity injects nothing.
     names = {}
     for logical, candidates in _by_resource_tag(
-            adopt_ctx.get("tagged"), id_val).items():
+            adopt_ctx.get("tagged"), id_val, cluster_name).items():
         if len(candidates) == 1:
             names[logical] = candidates[0]
 
