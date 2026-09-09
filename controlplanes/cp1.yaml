@@ -1,31 +1,17 @@
-# One persistent control plane, declared as a ControlPlane XR (the desired
-# state). The provisioning pipeline loads every file in this folder; each file's
-# managementMode decides its lifecycle - Provision/ObserveOnly are reconciled and
-# orphaned, Deprovision is decommissioned (deleted). Copy this file to add another.
-#
-# Keep `id` short/lowercase - it is the identity tag every composed AWS resource
-# carries, and it is how the decommission poll tracks teardown.
 apiVersion: aws.platform.upbound.io/v1alpha1
 kind: ControlPlane
 metadata:
   name: cp1
   namespace: default
 spec:
-  # REQUIRED for anything in this folder. The pipeline's bootstrap cluster is
-  # destroyed after each pass, so only the adopt Composition can find what the
-  # last run created. Without this ref the XRD default selects the plain
-  # Composition and a second run builds a second parallel stack. See README.md -
-  # including the Deprovision caveat, before relying on a decommission pass.
   crossplane:
     compositionRef:
       name: controlplane-adopt.aws.platform.upbound.io
   parameters:
     id: awsctpcp1
-    # REQUIRED for the pipeline: Provision (create+adopt+update, orphan) /
-    # ObserveOnly (watch, orphan) / Deprovision (decommission - delete). Omitting it
-    # defaults to Full, so a persistent control plane must set Provision.
     managementMode: Provision
     region: eu-central-1
+    naming: Deterministic
     version: "1.34"
     nodes:
       count: 2

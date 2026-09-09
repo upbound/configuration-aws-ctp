@@ -34,6 +34,10 @@ each load this folder and keep only their subset. The credential comes from
   `ObserveOnly` (adopt + watch, no changes), `Deprovision` (decommission - see
   below). Omitting it defaults to `Full` at the XRD (standard lifecycle, not acted
   on by the pipeline), so always set an explicit mode here.
+- `parameters.naming: Deterministic` (required here). The default `Generated`
+  gives the EKS cluster, its IAM roles and the node group random names that
+  nothing can rediscover, so a second run creates a **second cluster**. Set it at
+  creation - changing it later is destructive.
 - Immutable EKS fields (`nodes.instanceType`) reprovision via the backup +
   `installFrom` path, not in place.
 
@@ -78,13 +82,10 @@ Treat a control plane provisioned without the identity tags as create-only:
 tagging is what makes it adoptable, and it cannot be applied retroactively by
 this configuration.
 
-> **Status.** A real-AWS run (2026-09-07) adopted 31/31 resources with no
-> duplicates, so cross-run `Provision` is exercised. Cross-run `Deprovision`
-> leaked a VPC until `configuration-aws-network` v2.2.0 dropped its
-> `MainRouteTableAssociation`; this configuration now pulls that in via
-> `configuration-aws-eks` v2.2.0. The leak is structurally gone but has **not
-> been re-verified on real AWS**. See the migration note below if you have a
-> control plane provisioned before that version.
+> **Status.** Verified on real AWS 2026-09-09. Cross-run `Provision` and
+> `Deprovision` both work: the network layer re-adopts with identical external
+> names and the VPC no longer leaks on teardown. The EKS layer only re-adopts
+> with `naming: Deterministic` - without it a second cluster is created.
 
 ## Migration: control planes provisioned before network v2.2.0
 
