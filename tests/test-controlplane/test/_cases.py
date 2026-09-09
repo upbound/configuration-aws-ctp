@@ -1716,11 +1716,15 @@ CASES = [
               'xrdPath': 'apis/ctp/definition.yaml',
               'validate': True,
               'timeoutSeconds': 60,
-              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:ec2:eu-central-1:609897127049:route-table/rtb-066442f4ea6021c88',
-                                                'tags': {'upbound.io/ctp-id': 'test-cp',
-                                                         'upbound.io/ctp-resource': 'rt'}}],
+              # Supplied through the DESCRIBE, not the tag sweep: the sweep is not a
+              # source for `rt`, because it indexes deleted route tables and a
+              # phantom would poison both `rt` and the derived `route`.
+              'context': {'adopt': {'tagged': [],
                                     'subnets': [],
-                                    'routeTables': [],
+                                    'routeTables': [{'routeTableId': 'rtb-066442f4ea6021c88',
+                                                     'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                              'upbound.io/ctp-resource': 'rt'},
+                                                     'associations': []}],
                                     'pia': []}},
               'xr': {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
                      'kind': 'ControlPlane',

@@ -252,9 +252,25 @@ def build_external_names(adopt_ctx: dict, id_val: str, cluster_name: str,
         if len(candidates) == 1:
             names[logical] = candidates[0]
 
-    # Live overlay: settles what the sweep had to refuse, and supplies the
-    # associations nothing indexes. The route table matters twice over, because
-    # `route` is derived from whatever `rt` ends up being.
+    # The tag sweep must not be a FALLBACK for anything an EC2 describe covers.
+    # It indexes deleted resources for a long time (9 tagged subnets seen for 6
+    # live ones), and a describe returns only live ones - so where the describe
+    # is silent the correct answer is "does not exist", never "use the tag
+    # value". Dropping these keys before the overlay is what makes that true.
+    #
+    # Measured on real AWS 2026-09-09, first provision from a clean account: a
+    # phantom subnet was the sole unambiguous candidate, got injected, and the
+    # subnet MR then observed not-found and created a real one - healing itself.
+    # But the EKS Cluster had already resolved subnetIdRefs -> subnetIds against
+    # the phantom, and Crossplane resolves references only once, so CreateCluster
+    # failed with InvalidSubnetID.NotFound forever. A stale identifier does not
+    # just cost one confusing reconcile; it stranded every dependent resource.
+    for key in [k for k in names if k.startswith("subnet-")] + ["rt"]:
+        names.pop(key, None)
+
+    # Live overlay, and now the ONLY source for the types it covers. It also
+    # supplies the associations nothing indexes. The route table matters twice
+    # over, because `route` is derived from whatever `rt` ends up being.
     live_subnets = _live_by_resource_tag(
         adopt_ctx.get("subnets"), "subnetId", id_val, subnet_keys)
     names.update(live_subnets)
