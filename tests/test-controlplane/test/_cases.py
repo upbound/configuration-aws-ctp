@@ -1579,6 +1579,39 @@ CASES = [
                                    'kind': 'EKS',
                                    'metadata': {'name': 'test-cp'},
                                    'spec': {'parameters': {'externalNames': {'ebsCSIDriverPodIdentityAssociation': 'a-abcdefghij1234567'}}}}]}},
+    # The Pod Identity association must be scoped to THIS cluster on the first
+    # reconcile, before the EKS XR reports status.eks.clusterArn. There is no
+    # observed EKS XR here, so cluster_name is only available if it is derived
+    # from id + Deterministic naming. Without that the two candidates below are
+    # ambiguous, no external-name is injected, and the association is created -
+    # which 409s against the live one and wedges permanently.
+    {'name': 'adopt-scopes-pia-by-derived-cluster-name-before-eks-status',
+     'spec': {'compositionPath': 'apis/ctp/composition.yaml',
+              'xrdPath': 'apis/ctp/definition.yaml',
+              'validate': True,
+              'timeoutSeconds': 60,
+              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:eks:us-east-1:123456789012:podidentityassociation/test-cp-old-eks/a-staleaaaaaaaaaaa',
+                                                'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                         'upbound.io/ctp-resource': 'ebsCSIDriverPodIdentityAssociation'}},
+                                               {'arn': 'arn:aws:eks:us-east-1:123456789012:podidentityassociation/test-cp-eks/a-livebbbbbbbbbbbb',
+                                                'tags': {'upbound.io/ctp-id': 'test-cp',
+                                                         'upbound.io/ctp-resource': 'ebsCSIDriverPodIdentityAssociation'}}],
+                                    'assoc': [],
+                                    'pia': []}},
+              'xr': {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                     'kind': 'ControlPlane',
+                     'metadata': {'name': 'test-cp'},
+                     'spec': {'parameters': {'id': 'test-cp',
+                                             'region': 'us-east-1',
+                                             'version': '1.34',
+                                             'managementMode': 'Provision',
+                                             'naming': 'Deterministic',
+                                             'nodes': {'count': 2,
+                                                       'instanceType': 't3.small'}}}},
+              'assertResources': [{'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                                   'kind': 'EKS',
+                                   'metadata': {'name': 'test-cp'},
+                                   'spec': {'parameters': {'externalNames': {'ebsCSIDriverPodIdentityAssociation': 'a-livebbbbbbbbbbbb'}}}}]}},
     # The two database SecurityGroupRules carry a Terraform-computed crc32 hash as
     # their external-name, so the adopt path derives it from the tag-discovered
     # security group id rather than querying for it - no AWS API exposes it.

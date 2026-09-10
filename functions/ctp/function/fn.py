@@ -224,8 +224,17 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     # Bounds which subnet-*/rta-* keys may be discovered: an unknown one aborts
     # the Network composition. See adopt.network_external_names.
     network_subnets = resolve_subnets(network_param, region)
+    # The Pod Identity tag sweep must scope by cluster on the FIRST reconcile.
+    # cluster_name above comes from the EKS XR status, which is empty until the
+    # cluster reports - a window the EKS composition can use to create the
+    # association with no external-name. That 409s on the live one and upjet
+    # never re-Observes, so the association is wedged for good (measured
+    # 2026-09-09). Deterministic naming makes the name derivable up front, and
+    # adoption already requires it.
+    adopt_cluster_name = cluster_name or (
+        "{}-eks".format(id_val) if naming == "Deterministic" else "")
     external_names = build_external_names(
-        adopt_ctx, id_val, cluster_name, cluster_account_id, oidc_host,
+        adopt_ctx, id_val, adopt_cluster_name, cluster_account_id, oidc_host,
         subnets=network_subnets)
 
     # --- Compose resources ---
