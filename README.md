@@ -103,7 +103,7 @@ spec:
 | `providerVerticalPodAutoscaling` | no | Enable VPA for UXP providers (CPU/memory bounds). |
 | `managementPolicies` | no | Crossplane management policies. No schema default: when set it wins over `managementMode`. |
 | `managementMode` | no | Lifecycle: `Full` (default, standard), `Provision` (create/adopt/update, never delete), `ObserveOnly` (watch only), `Deprovision` (adopt and delete). See below. |
-| `naming` | no | How the composed EKS resources are named, forwarded to the EKS XR: `Generated` (default) or `Deterministic` (names derived from `id`, so the cluster, its three IAM roles and the node group are adoptable by name with no AWS query). **Destructive to change on a live control plane** - Crossplane cannot rename a composed resource, so it deletes the EKS cluster and builds a replacement. |
+| `naming` | no | How the composed EKS resources are named, forwarded to the EKS XR: `Generated` (default) or `Deterministic` (names derived from `id`, so the cluster, its three IAM roles and the node group are adoptable by name with no AWS query). Destructive to change on a live control plane - Crossplane cannot rename a composed resource, so it deletes the EKS cluster and builds a replacement. |
 
 > **cert-manager** is installed unconditionally on every control plane (a free
 > dependency of Knative/k8gb/ArgoCD Gateway TLS). **Envoy Gateway (Gateway API)**
@@ -190,7 +190,7 @@ kubectl get managedresourceactivationpolicy configuration-aws-ctp -o yaml
 up a disposable local KIND bootstrap and reconciles or decommissions them
 according to each file's `managementMode`. See `controlplanes/README.md`.
 
-Two layers are involved and must not be conflated:
+Two layers are involved:
 
 | Layer | What it is | Lifecycle |
 |---|---|---|
@@ -205,7 +205,7 @@ resource this configuration owns is tagged `upbound.io/ctp-id: <id>` and
 `upbound.io/ctp-resource: <logical name>`, and the adopt path queries those tags
 to inject `crossplane.io/external-name` before Crossplane reconciles.
 
-**A resource provisioned without those tags is not adoptable.** Tag before you
+A resource provisioned without those tags is not adoptable. Tag before you
 provision anything you intend to keep - the tags cannot be applied retroactively
 by this configuration.
 
@@ -239,7 +239,7 @@ Nothing the queries return is trusted. Every entry is re-checked before use:
 | `upbound.io/ctp-id` must equal this control plane's `id` | Shared account: one other control plane is otherwise enough to make its VPC the only candidate for `vpc`, so unambiguous, so adopted |
 | the logical name must be one this configuration emits | `upbound.io/ctp-resource` is an ordinary AWS tag, and its value picks which resource an identifier lands on |
 | a subnet must still be in this control plane's layout | A subnet orphaned by an earlier layout is live and correctly tagged, and forwarding its key aborts the whole `Network` composition |
-| ambiguity is refused, and an empty `id` adopts nothing | A dead identifier is the duplicate adoption prevents, plus a confusing error |
+| ambiguity is refused, and an empty `id` adopts nothing | A dead identifier is the duplicate adoption exists to prevent, plus a confusing error |
 
 The filters being derived rather than configured is deliberate: a filter that
 does not scope to this control plane cannot be written.
@@ -261,7 +261,7 @@ the Composition, which is why adopt is a separate Composition rather than a flag
 The two database `SecurityGroupRule`s are the one exception: their external-name
 is a Terraform-computed `sgrule-<crc32>` hash rather than an AWS identifier, so
 no query can return it and the adopt path computes it from the discovered
-security-group id instead. Only the annotation's *presence* is load-bearing: the
+security-group id instead. Only the annotation's presence is load-bearing: the
 provider matches a rule by its ports, protocol, type and CIDRs and never
 validates the hash. It is computed correctly anyway, so the rendered annotation
 matches what the provider would have written.

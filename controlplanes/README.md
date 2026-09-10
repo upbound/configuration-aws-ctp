@@ -5,7 +5,7 @@ Each `*.yaml` here is one persistent AWS EKS+UXP control plane, declared as a
 no credentials.
 
 Each file's `spec.parameters.managementMode` decides its lifecycle. The
-provisioning pipeline makes two passes over this folder, keying on the **explicit**
+provisioning pipeline makes two passes over this folder, keying on the explicit
 mode (a file without a `managementMode` is ignored by both):
 
 - **reconcile** - control planes set to `Provision` or `ObserveOnly`:
@@ -36,7 +36,7 @@ each load this folder and keep only their subset. The credential comes from
   on by the pipeline), so always set an explicit mode here.
 - `parameters.naming: Deterministic` (required here). The default `Generated`
   gives the EKS cluster, its IAM roles and the node group random names that
-  nothing can rediscover, so a second run creates a **second cluster**. Set it at
+  nothing can rediscover, so a second run creates a second cluster. Set it at
   creation - changing it later is destructive.
 - Immutable EKS fields (`nodes.instanceType`) reprovision via the backup +
   `installFrom` path, not in place.
@@ -70,22 +70,23 @@ Without that opt-in, this folder supports:
 - **create** - a control plane that does not exist yet, and
 - **same-run update** - changes applied while that run's bootstrap is alive.
 
-and does **not** support:
+and does not support:
 
 - **update across runs** - a second run creates a second, parallel stack rather
   than updating the first.
 - **`Deprovision` across runs** - the pass would create a whole new control plane,
-  wait for it, delete *that*, and report success, leaving the original running and
+  wait for it, delete that one, and report success, leaving the original running and
   orphaned.
 
 Treat a control plane provisioned without the identity tags as create-only:
 tagging is what makes it adoptable, and it cannot be applied retroactively by
 this configuration.
 
-> **Status.** Verified on real AWS 2026-09-09. Cross-run `Provision` and
-> `Deprovision` both work: the network layer re-adopts with identical external
-> names and the VPC no longer leaks on teardown. The EKS layer only re-adopts
-> with `naming: Deterministic` - without it a second cluster is created.
+> **Status.** Verified on real AWS 2026-09-10 against `configuration-aws-eks`
+> v2.2.1: provision, cross-run re-adopt and `Deprovision` all pass, with one of
+> each resource after re-adopt and AWS drained to zero on teardown. Requires
+> `naming: Deterministic` - under `Generated` a second run builds a second
+> cluster and three duplicate IAM roles.
 
 ## Migration: control planes provisioned before network v2.2.0
 
@@ -97,7 +98,7 @@ delete left that table still main. Deleting a route table disassociates every
 association including the main one, which AWS refuses, so `rt` and the VPC leaked.
 
 v2.2.0 dropped the resource, and this configuration pulls it in via
-`configuration-aws-eks` v2.2.0. **New control planes are unaffected.**
+`configuration-aws-eks` v2.2.1. New control planes are unaffected.
 
 A control plane provisioned before that version still has the association live in
 AWS, and nothing will delete it - Crossplane does not manage what is no longer
@@ -156,11 +157,11 @@ Optionally confirm deletion on the AWS side first:
 
     aws eks describe-cluster --name <cluster-name>   # want: ResourceNotFoundException
 
-Then **delete the control plane's file**:
+Then delete the control plane's file:
 
     git rm controlplanes/<name>.yaml
 
-A file left at `Deprovision` is **not inert**. The policy keeps `Create`, so the
+A file left at `Deprovision` is not inert. The policy keeps `Create`, so the
 next dispatch re-creates the entire control plane, waits for `Ready`, and destroys
 it again - 40-60 min of real AWS spend, reported as success.
 

@@ -1,0 +1,15 @@
+apiVersion: aws.platform.upbound.io/v1alpha1
+kind: ControlPlane
+metadata:
+  name: e2e-test-cp
+spec:
+  parameters:
+    id: e2e-test-cp
+    region: us-east-1
+    version: "1.34"
+    nodes:
+      count: 2
+      instanceType: t3.small
+    backup:
+      enabled: "yes"
+      location: arn:aws:s3:::upbound-e2e-test-cp-backup

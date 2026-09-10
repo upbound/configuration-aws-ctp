@@ -161,22 +161,12 @@ def _by_resource_tag(tagged: list, ctp_id: str, cluster_name: str = "") -> dict:
         logical = tags.get("upbound.io/ctp-resource")
         arn = entry.get("arn", "")
         identifier = arn_identifier(arn)
-        # A Pod Identity Association belongs to one cluster, and its ARN says
-        # which - so adopting one from another cluster is wrong whether or not it
-        # still exists. Checking it also removes the stale entries that otherwise
-        # make this logical name ambiguous: measured 2026-09-09, the tag index
-        # held 6 associations for one name where only 1 was live, the other 5
-        # belonging to clusters long deleted. Ambiguity meant no external-name,
-        # so Crossplane created and AWS answered
-        # 409 ResourceInUseException: Association already exists - wedged both
-        # ways, and it blocks configuration-aws-eks's readiness sequence, so the
-        # whole control plane never converges.
-        #
-        # Only applied once the cluster name is known - it arrives from the EKS
-        # XR status a reconcile later. Until then this falls through to the
-        # ambiguity guard, which refuses anyway whenever phantoms exist, so the
-        # real behaviour is the same: refused on the first reconcile, adopted on
-        # the next.
+        # The ARN says which cluster an association belongs to, so one from
+        # another cluster is wrong whether or not it still exists. It also
+        # resolves the ambiguity phantoms cause: 6 associations for one name
+        # where 1 was live (2026-09-09). Ambiguity injects no external-name, so
+        # Crossplane creates and AWS answers 409 ResourceInUseException.
+        # cluster_name is empty only under Generated naming; see fn.py.
         pia_cluster = _pia_cluster(arn)
         if cluster_name and pia_cluster and pia_cluster != cluster_name:
             continue
@@ -284,19 +274,13 @@ def build_external_names(adopt_ctx: dict, id_val: str, cluster_name: str,
         if len(candidates) == 1:
             names[logical] = candidates[0]
 
-    # The tag sweep must not be a FALLBACK for anything an EC2 describe covers.
-    # It indexes deleted resources for a long time (9 tagged subnets seen for 6
-    # live ones), and a describe returns only live ones - so where the describe
-    # is silent the correct answer is "does not exist", never "use the tag
-    # value". Dropping these keys before the overlay is what makes that true.
-    #
-    # Measured on real AWS 2026-09-09, first provision from a clean account: a
-    # phantom subnet was the sole unambiguous candidate, got injected, and the
-    # subnet MR then observed not-found and created a real one - healing itself.
-    # But the EKS Cluster had already resolved subnetIdRefs -> subnetIds against
-    # the phantom, and Crossplane resolves references only once, so CreateCluster
-    # failed with InvalidSubnetID.NotFound forever. A stale identifier does not
-    # just cost one confusing reconcile; it stranded every dependent resource.
+    # Never a fallback where an EC2 describe is authoritative: the sweep indexes
+    # deleted resources for hours (9 tagged subnets for 6 live), so where the
+    # describe is silent the answer is "does not exist". Dropping these keys
+    # before the overlay is what enforces that. A phantom subnet cost more than
+    # a bad reconcile: the Cluster resolved subnetIdRefs -> subnetIds against it,
+    # Crossplane resolves references once, and CreateCluster then failed with
+    # InvalidSubnetID.NotFound forever (2026-09-09).
     for key in [k for k in names if k.startswith("subnet-")] + ["rt"]:
         names.pop(key, None)
 
