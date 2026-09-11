@@ -1,7 +1,7 @@
 """E2E test: decommission the Deprovision control planes under controlplanes/.
 
 Loads every controlplanes/*.yaml, keeps only those with managementMode explicitly
-Deprovision, and builds one E2ETest that adopts them and then deletes them
+Deprovision, and builds one E2ETest that imports them and then deletes them
 (Crossplane cascades the AWS teardown). Because this run contains only Deprovision
 control planes, provision.yaml can keep KIND alive and simply poll until no managed
 resources remain. The credential comes from UP_CLOUD_CREDENTIALS, which up test

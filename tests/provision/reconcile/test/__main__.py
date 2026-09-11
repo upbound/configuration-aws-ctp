@@ -1,7 +1,7 @@
 """E2E test: reconcile the Provision/ObserveOnly control planes under controlplanes/.
 
 Loads every controlplanes/*.yaml, keeps those whose managementMode is explicitly
-Provision or ObserveOnly, and builds one E2ETest that provisions/adopts them -
+Provision or ObserveOnly, and builds one E2ETest that provisions/imports them -
 they are orphaned on teardown. The credential comes from UP_CLOUD_CREDENTIALS,
 which up test injects into the (otherwise isolated) test container; the
 managementMode lives in each control-plane file, so nothing else needs to cross

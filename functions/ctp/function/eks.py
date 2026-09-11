@@ -36,12 +36,12 @@ def add_eks_resource(rsp, id_val, region, provider_config, version, nodes,
 
     # Forwarded to configuration-aws-eks v2.1.0+. Deterministic makes the cluster,
     # the three IAM roles and the node group name-as-identifier, so a stateless
-    # bootstrap re-adopts them without any AWS query.
+    # bootstrap re-imports them without any AWS query.
     eks["spec"]["parameters"]["naming"] = naming
 
     # Cluster, node group and the IAM roles are name-as-identifier, so upstream
     # deterministic naming covers them; the Pod Identity association is not, and
-    # comes from the adopt map.
+    # comes from the import map.
     if external_names:
         eks["spec"]["parameters"]["externalNames"] = external_names
 

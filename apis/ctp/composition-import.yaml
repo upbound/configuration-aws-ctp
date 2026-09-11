@@ -1,4 +1,4 @@
-# Adopt variant of the ControlPlane Composition, for the dynamic-provisioning
+# Import variant of the ControlPlane Composition, for the dynamic-provisioning
 # pipeline. Identical to controlplane.aws.platform.upbound.io except for the
 # discovery steps ahead of ctp: one derives the filters, three query AWS.
 #
@@ -10,14 +10,14 @@
 # static in the Composition, and it fails the whole composition when that block is
 # missing. Consumers who have no aws-creds Secret must keep working, so the query
 # steps live here and control planes opt in with
-# spec.crossplane.compositionRef.name: controlplane-adopt.aws.platform.upbound.io.
+# spec.crossplane.compositionRef.name: controlplane-import.aws.platform.upbound.io.
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
   labels:
     provider: aws
-    variant: adopt
-  name: controlplane-adopt.aws.platform.upbound.io
+    variant: import
+  name: controlplane-import.aws.platform.upbound.io
 spec:
   compositeTypeRef:
     apiVersion: aws.platform.upbound.io/v1alpha1
@@ -43,16 +43,16 @@ spec:
   # Derives the queries' filters from spec.parameters.id, so no filter is
   # operator-supplied: a filter that does not scope to this control plane is the
   # one input that could make discovery return another one's resources. The two
-  # APIs need different shapes for it - see build_adopt_filters in adopt.py.
+  # APIs need different shapes for it - see build_import_filters in imports.py.
   #
   # The ctp function in a mode its `input` selects; emits no resources. Separate
   # step because filtersRef is resolved when the query step runs.
   - functionRef:
       name: upbound-configuration-aws-ctpctp
-    step: prepare-adopt-filters
+    step: prepare-import-filters
     input:
       apiVersion: ctp.fn.crossplane.io/v1alpha1
-      kind: AdoptFilters
+      kind: ImportFilters
 
   # Everything taggable, in one server-side tag-filtered call. Returns
   # [{arn, tags}]; the AWS identifier is the last segment of the ARN. Covers VPC,
@@ -65,10 +65,10 @@ spec:
       kind: Input
       queryType: GetResources
       regionRef: spec.parameters.region
-      filtersRef: context.adopt.filters.tagged
+      filtersRef: context.import.filters.tagged
       parameters:
         resourceTypeFilters: "ec2:vpc,ec2:subnet,ec2:internet-gateway,ec2:route-table,ec2:security-group,ec2:elastic-ip,eks:podidentityassociation"
-      target: context.adopt.tagged
+      target: context.import.tagged
     credentials:
     - name: aws-creds
       source: Secret
@@ -81,7 +81,7 @@ spec:
   # resource, and DescribeRouteTables carries each route table's associations,
   # which no tag-based or Cloud Control query exposes at all.
   #
-  # Both scoped by context.adopt.filters.ec2. These two refuse an empty filter
+  # Both scoped by context.import.filters.ec2. These two refuse an empty filter
   # set rather than reading the region; GetResources above does not, which is why
   # build_external_names re-checks the identity tag on every entry regardless.
   - functionRef:
@@ -92,8 +92,8 @@ spec:
       kind: Input
       queryType: DescribeSubnets
       regionRef: spec.parameters.region
-      filtersRef: context.adopt.filters.ec2
-      target: context.adopt.subnets
+      filtersRef: context.import.filters.ec2
+      target: context.import.subnets
     credentials:
     - name: aws-creds
       source: Secret
@@ -111,8 +111,8 @@ spec:
       kind: Input
       queryType: DescribeRouteTables
       regionRef: spec.parameters.region
-      filtersRef: context.adopt.filters.ec2
-      target: context.adopt.routeTables
+      filtersRef: context.import.filters.ec2
+      target: context.import.routeTables
     credentials:
     - name: aws-creds
       source: Secret
@@ -121,7 +121,7 @@ spec:
         name: aws-creds
 
   # The two database SecurityGroupRules are NOT discovered: their external-name
-  # is Terraform's sgrule-<crc32>, which no API returns, so adopt.py derives it.
+  # is Terraform's sgrule-<crc32>, which no API returns, so imports.py derives it.
   # DescribeSecurityGroupRules could supply the signature the hash is built from
   # (replacing the mirrored constants) but scopes only by group-id, which is
   # itself discovered above - so it cannot be a static filter here.

@@ -11,7 +11,7 @@ name: Provision Control Planes
 on:
   workflow_dispatch: {}
 
-# Adoption is by AWS resource identity (parameters.id), so two dispatches would
+# Import is by AWS resource identity (parameters.id), so two dispatches would
 # reconcile the same resources at once, or a reconcile would interleave with a
 # decommission of the same control plane. cancel-in-progress: false on purpose -
 # cancelling a decommission mid-cascade is worse than queueing behind it, since

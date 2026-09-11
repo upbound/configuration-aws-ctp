@@ -1,12 +1,12 @@
-"""11-adopt - external-name discovery for the adopt Composition.
+"""11-import - external-name discovery for the import Composition.
 
 AWS assigns most resource identifiers, so a stateless bootstrap cluster cannot
-find what a previous run created. apis/ctp/composition-adopt.yaml derives the
+find what a previous run created. apis/ctp/composition-import.yaml derives the
 discovery filters from spec.parameters.id, runs function-aws-query, and leaves:
 
-  context.adopt.tagged      [{arn, tags}]                    Tagging API
-  context.adopt.subnets     [{subnetId, tags, ...}]          ec2:DescribeSubnets
-  context.adopt.routeTables [{routeTableId, associations, tags, ...}]
+  context.import.tagged      [{arn, tags}]                    Tagging API
+  context.import.subnets     [{subnetId, tags, ...}]          ec2:DescribeSubnets
+  context.import.routeTables [{routeTableId, associations, tags, ...}]
 
 build_external_names turns those into {composition-resource-name: external-name};
 apply_external_names stamps them so Crossplane observes instead of creating.
@@ -29,7 +29,7 @@ from crossplane.function import resource
 
 # Mirrored from configuration-aws-network functions/network/main.k:278-322.
 # Drift is SILENT: terraform-provider-aws matches a rule by re-expanding its own
-# spec, not by the id, so a wrong hash still adopts. Only NON-EMPTINESS matters -
+# spec, not by the id, so a wrong hash still imports. Only NON-EMPTINESS matters -
 # an empty external-name means "absent", so Crossplane creates and AWS returns
 # InvalidPermission.Duplicate. Kept exact anyway so the annotation matches what
 # upjet would have written.
@@ -46,13 +46,13 @@ _LEGACY_SG_RULES = {
 _ROUTE_DESTINATION = "0.0.0.0/0"
 
 # The only logical name the route-table describe may supply. `mrt` is the
-# MainRouteTableAssociation, never adopted (see _association_external_names).
+# MainRouteTableAssociation, never imported (see _association_external_names).
 _ROUTE_TABLE_KEYS = frozenset({"rt"})
 
 _CTP_ID_TAG = "upbound.io/ctp-id"
 
 
-def build_adopt_filters(id_val: str) -> dict:
+def build_import_filters(id_val: str) -> dict:
     """Discovery filters for the three queries, derived from `id`.
 
     The two APIs need different shapes for one intent: a Tagging-API TagFilter
@@ -187,7 +187,7 @@ def _live_by_resource_tag(entries: list, id_field: str, ctp_id: str,
     must not fail open.
 
     Two candidates here are two *live* resources under one name - a duplicate an
-    earlier run created, where adopting either strands the other.
+    earlier run created, where importing either strands the other.
     """
     out = {}
     if not ctp_id:
@@ -218,10 +218,10 @@ def _association_external_names(route_tables: list, subnets: dict,
     out = {}
     for rt in route_tables or []:
         # A foreign or operator-added (e.g. NAT) route table can own one of our
-        # subnets' associations, and adopting it is not inert: route_table_id is
+        # subnets' associations, and importing it is not inert: route_table_id is
         # not ForceNew and Update calls ReplaceRouteTableAssociation, so the next
         # reconcile silently repoints that subnet at our IGW-default table and it
-        # loses NAT egress. Un-adopted it failed loudly instead.
+        # loses NAT egress. Un-imported it failed loudly instead.
         if (rt.get("tags") or {}).get(_CTP_ID_TAG) != ctp_id:
             continue
         for assoc in rt.get("associations") or []:
@@ -233,9 +233,9 @@ def _association_external_names(route_tables: list, subnets: dict,
             assoc_id = assoc.get("routeTableAssociationId")
             if not assoc_id:
                 continue
-            # Never adopt the main association. Nothing composes a
+            # Never import the main association. Nothing composes a
             # MainRouteTableAssociation any more (aws-network dropped it in
-            # v2.2.0 - it made the VPC undeletable), and an adopted one could
+            # v2.2.0 - it made the VPC undeletable), and an imported one could
             # not be deleted anyway: it restores original_route_table_id, which
             # AWS never returns. Redundant in practice too, since AWS reports no
             # subnet id for an implicit association.
@@ -252,7 +252,7 @@ def _association_external_names(route_tables: list, subnets: dict,
     return {k: v[0] for k, v in out.items() if len(v) == 1}
 
 
-def build_external_names(adopt_ctx: dict, id_val: str, cluster_name: str,
+def build_external_names(import_ctx: dict, id_val: str, cluster_name: str,
                          account_id: str, oidc_host: str,
                          subnets: list = None) -> dict:
     """Map composition-resource-name to the external name to inject.
@@ -262,15 +262,15 @@ def build_external_names(adopt_ctx: dict, id_val: str, cluster_name: str,
     `subnets` is the list the Network XR will get, and it bounds which
     subnet-*/rta-* names may be discovered at all.
     """
-    adopt_ctx = adopt_ctx or {}
+    import_ctx = import_ctx or {}
     subnet_keys = frozenset(
         "subnet-" + suffix for suffix in _subnet_suffixes(subnets))
 
-    # Unambiguous tag hits only. A dead identifier is the duplicate adoption
+    # Unambiguous tag hits only. A dead identifier is the duplicate import
     # exists to prevent, plus a confusing error, so ambiguity injects nothing.
     names = {}
     for logical, candidates in _by_resource_tag(
-            adopt_ctx.get("tagged"), id_val, cluster_name).items():
+            import_ctx.get("tagged"), id_val, cluster_name).items():
         if len(candidates) == 1:
             names[logical] = candidates[0]
 
@@ -288,20 +288,20 @@ def build_external_names(adopt_ctx: dict, id_val: str, cluster_name: str,
     # supplies the associations nothing indexes. The route table matters twice
     # over, because `route` is derived from whatever `rt` ends up being.
     live_subnets = _live_by_resource_tag(
-        adopt_ctx.get("subnets"), "subnetId", id_val, subnet_keys)
+        import_ctx.get("subnets"), "subnetId", id_val, subnet_keys)
     names.update(live_subnets)
     names.update(_live_by_resource_tag(
-        adopt_ctx.get("routeTables"), "routeTableId", id_val,
+        import_ctx.get("routeTables"), "routeTableId", id_val,
         _ROUTE_TABLE_KEYS))
     names.update(_association_external_names(
-        adopt_ctx.get("routeTables"), live_subnets, id_val))
+        import_ctx.get("routeTables"), live_subnets, id_val))
 
-    # Gate the derivations below on adopt_ctx. They need no query, so emitting
+    # Gate the derivations below on import_ctx. They need no query, so emitting
     # them unconditionally is tempting - but on the default Composition every
     # existing consumer would gain an external-name it never had, and an
     # off-by-one derivation there means a duplicate OIDC provider, which breaks
-    # IRSA. The default path never adopts, so the upside is nil.
-    if not adopt_ctx:
+    # IRSA. The default path never imports, so the upside is nil.
+    if not import_ctx:
         return {k: v for k, v in names.items() if v}
 
     sg_id = names.get("sg")
@@ -310,7 +310,7 @@ def build_external_names(adopt_ctx: dict, id_val: str, cluster_name: str,
             names[logical] = sgrule_external_name(
                 sg_id, fp, tp, proto, rtype, cidrs)
 
-    # Routes are not taggable and no API returns this id. Adoption does not
+    # Routes are not taggable and no API returns this id. Import does not
     # actually depend on it (upjet ignores the annotation) - it is emitted so the
     # rendered annotation matches the one upjet writes back.
     rt_id = names.get("rt")
@@ -358,7 +358,7 @@ def network_external_names(external_names: dict, subnets: list = None) -> dict:
     outside that set aborts the Network composition and takes the VPC, every
     subnet and the route table with it - and a subnet orphaned by an earlier
     layout is the expected steady state, since Provision/ObserveOnly never
-    delete. Dropping the key instead costs one unadopted subnet, which is also
+    delete. Dropping the key instead costs one unimported subnet, which is also
     why _format_subnet is mirrored rather than trusted.
     """
     accepted = frozenset(
@@ -376,7 +376,7 @@ def eks_external_names(external_names: dict) -> dict:
     """The subset configuration-aws-eks composes.
 
     A strict allow-list. The sha256-digest AccessEntry names are dropped, not
-    passed through, so they are not adoptable - nothing discovers them either.
+    passed through, so they are not importable - nothing discovers them either.
     """
     return {
         k: v for k, v in (external_names or {}).items()

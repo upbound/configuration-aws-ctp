@@ -23,8 +23,8 @@ def stamp(resource_dict: dict, config: Dict, aws_tags: bool = False,
     `upbound.io/ctp-id` is the control plane's `id` and `upbound.io/ctp-resource`
     is the logical resource name. AWS assigns most identifiers itself, so these
     tags are the only way a stateless bootstrap can find these resources again
-    and adopt them instead of creating duplicates. An untagged resource is not
-    adoptable.
+    and import them instead of creating duplicates. An untagged resource is not
+    importable.
     """
     meta = resource_dict.setdefault("metadata", {})
     ann = meta.setdefault("annotations", {})

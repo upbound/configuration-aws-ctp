@@ -1391,7 +1391,7 @@ CASES = [
                                    'metadata': {'name': 'test-cp-uxp'},
                                    'spec': {'managementPolicies': ['*']}}]}},
     # Identity tags: every AWS resource this configuration owns carries
-    # upbound.io/ctp-id (the adoption key) and upbound.io/ctp-resource (which
+    # upbound.io/ctp-id (the import key) and upbound.io/ctp-resource (which
     # logical resource it is), so a stateless bootstrap can find them again.
     {'name': 'identity-tags-on-owned-aws-resources',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
@@ -1438,7 +1438,7 @@ CASES = [
                                    'metadata': {'name': 'test-cp'},
                                    'spec': {'parameters': {'naming': 'Generated'}}}]}},
     # Opt-in forwards to the EKS XR, which is what makes the cluster, the three
-    # IAM roles and the node group adoptable by name with no AWS query.
+    # IAM roles and the node group importable by name with no AWS query.
     {'name': 'naming-deterministic-forwarded',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
@@ -1457,22 +1457,22 @@ CASES = [
                                    'kind': 'EKS',
                                    'metadata': {'name': 'test-cp'},
                                    'spec': {'parameters': {'naming': 'Deterministic'}}}]}},
-    # Adopt path: a synthetic context.adopt.tagged makes the composition inject
+    # Import path: a synthetic context.import.tagged makes the composition inject
     # crossplane.io/external-name on the k8gb EIP, so Crossplane observes the
     # existing Elastic IP instead of allocating a second one.
     #
     # Rendered against the default Composition on purpose. The ctp function reads
-    # context.adopt whichever Composition invoked it, so this covers exactly the
-    # same code path, while apis/ctp/composition-adopt.yaml cannot be rendered
+    # context.import regardless of which Composition invoked it, so this covers the
+    # same code path, while apis/ctp/composition-import.yaml cannot be rendered
     # offline at all: function-aws-query returns a fatal result when its AWS call
     # fails, so its steps need live credentials and real AWS calls even when the
     # test supplies the context they would have produced.
-    {'name': 'adopt-injects-eip-external-name',
+    {'name': 'import-injects-eip-external-name',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
               'validate': True,
               'timeoutSeconds': 60,
-              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:elastic-ip/eipalloc-0abc',
+              'context': {'import': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:elastic-ip/eipalloc-0abc',
                                                 'tags': {'upbound.io/ctp-id': 'test-cp',
                                                          'upbound.io/ctp-resource': 'k8gb-eip-0'}}],
                                     'assoc': [],
@@ -1496,20 +1496,20 @@ CASES = [
     # Derived identifiers need no AWS query: the OIDC provider's ID is its ARN and
     # a role-policy attachment is imported as role-name/policy-arn. Both are built
     # from values the composition already holds, so they are injected on any path
-    # that has an observed cluster ARN and OIDC issuer - the adopt Composition is
+    # that has an observed cluster ARN and OIDC issuer - the import Composition is
     # not required for these two, only for the tag-discovered ones.
-    {'name': 'adopt-derives-oidc-and-attachment',
+    {'name': 'import-derives-oidc-and-attachment',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
               'validate': True,
               'timeoutSeconds': 60,
-              # An adopt context with empty query results: the dict is truthy so
+              # An import context with empty query results: the dict is truthy so
               # build_external_names proceeds to its derived entries, but supplies
               # no tag-discovered ones. That isolates the derivation. The context
-              # is required - the derived entries are gated on adopt_ctx so the
+              # is required - the derived entries are gated on import_ctx so the
               # default Composition injects nothing, and without it this renders
               # exactly as an ordinary control plane does.
-              'context': {'adopt': {'tagged': [], 'assoc': [], 'pia': []}},
+              'context': {'import': {'tagged': [], 'assoc': [], 'pia': []}},
               'xr': {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
                      'kind': 'ControlPlane',
                      'metadata': {'name': 'test-cp'},
@@ -1543,8 +1543,8 @@ CASES = [
     # The leaves live in configuration-aws-network / -aws-eks, so this repo hands
     # the discovered map down through the sub-XRs' externalNames parameter rather
     # than annotating resources it does not own. Rendered against the default
-    # Composition for the same reason as adopt-injects-eip-external-name above.
-    {'name': 'adopt-forwards-external-names-to-sub-xrs',
+    # Composition for the same reason as import-injects-eip-external-name above.
+    {'name': 'import-forwards-external-names-to-sub-xrs',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
               'validate': True,
@@ -1554,7 +1554,7 @@ CASES = [
               # sub-configuration validates the keys it receives and aborts its
               # own composition on an unknown one, so sending the combined map
               # breaks both of them.
-              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:vpc/vpc-0abc',
+              'context': {'import': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:vpc/vpc-0abc',
                                                 'tags': {'upbound.io/ctp-id': 'test-cp',
                                                          'upbound.io/ctp-resource': 'vpc'}},
                                                {'arn': 'arn:aws:eks:us-east-1:123456789012:podidentityassociation/test-cp-eks/a-abcdefghij1234567',
@@ -1585,12 +1585,12 @@ CASES = [
     # from id + Deterministic naming. Without that the two candidates below are
     # ambiguous, no external-name is injected, and the association is created -
     # which 409s against the live one and wedges permanently.
-    {'name': 'adopt-scopes-pia-by-derived-cluster-name-before-eks-status',
+    {'name': 'import-scopes-pia-by-derived-cluster-name-before-eks-status',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
               'validate': True,
               'timeoutSeconds': 60,
-              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:eks:us-east-1:123456789012:podidentityassociation/test-cp-old-eks/a-staleaaaaaaaaaaa',
+              'context': {'import': {'tagged': [{'arn': 'arn:aws:eks:us-east-1:123456789012:podidentityassociation/test-cp-old-eks/a-staleaaaaaaaaaaa',
                                                 'tags': {'upbound.io/ctp-id': 'test-cp',
                                                          'upbound.io/ctp-resource': 'ebsCSIDriverPodIdentityAssociation'}},
                                                {'arn': 'arn:aws:eks:us-east-1:123456789012:podidentityassociation/test-cp-eks/a-livebbbbbbbbbbbb',
@@ -1613,17 +1613,17 @@ CASES = [
                                    'metadata': {'name': 'test-cp'},
                                    'spec': {'parameters': {'externalNames': {'ebsCSIDriverPodIdentityAssociation': 'a-livebbbbbbbbbbbb'}}}}]}},
     # The two database SecurityGroupRules carry a Terraform-computed crc32 hash as
-    # their external-name, so the adopt path derives it from the tag-discovered
+    # their external-name, so the import path derives it from the tag-discovered
     # security group id rather than querying for it - no AWS API exposes it.
     # Asserted on the Network sub-XR because configuration-aws-network composes
     # those rules, not this repo. Rendered against the default Composition for the
-    # same reason as adopt-injects-eip-external-name above.
-    {'name': 'adopt-derives-security-group-rule-hash',
+    # same reason as import-injects-eip-external-name above.
+    {'name': 'import-derives-security-group-rule-hash',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
               'validate': True,
               'timeoutSeconds': 60,
-              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:609897127049:security-group/sg-0ecce795575a1aef7',
+              'context': {'import': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:609897127049:security-group/sg-0ecce795575a1aef7',
                                                 'tags': {'upbound.io/ctp-id': 'test-cp',
                                                          'upbound.io/ctp-resource': 'sg'}}],
                                     'assoc': [],
@@ -1652,12 +1652,12 @@ CASES = [
     # which is what makes this prove the identity scoping - without it there are
     # two candidates, the describe refuses them in turn, and the asserted key is
     # absent rather than wrong.
-    {'name': 'adopt-resolves-ambiguous-subnet-from-live-describe',
+    {'name': 'import-resolves-ambiguous-subnet-from-live-describe',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
               'validate': True,
               'timeoutSeconds': 60,
-              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:subnet/subnet-0aa11bb22cc33dd44',
+              'context': {'import': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:subnet/subnet-0aa11bb22cc33dd44',
                                                 'tags': {'upbound.io/ctp-id': 'test-cp',
                                                          'upbound.io/ctp-resource': 'subnet-us-east-1a-192-168-96-0-19-private'}},
                                                {'arn': 'arn:aws:ec2:us-east-1:123456789012:subnet/subnet-0ee55ff66aa77bb88',
@@ -1689,16 +1689,16 @@ CASES = [
     # Associations carry no tags, so they are matched through their subnet:
     # upstream derives subnet-<suffix> and rta-<suffix> from one subnets entry.
     #
-    # rtbassoc-0112233445566778 is the main association, never adopted. Note this
+    # rtbassoc-0112233445566778 is the main association, never imported. Note this
     # case does NOT prove that: assertResources is a subset match and cannot see
     # an extra key. rtbassoc-0999888777666555 is disassociated and listed after
     # the live one, so it must be skipped on state or it overwrites the assertion.
-    {'name': 'adopt-derives-route-table-associations',
+    {'name': 'import-derives-route-table-associations',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
               'validate': True,
               'timeoutSeconds': 60,
-              'context': {'adopt': {'tagged': [],
+              'context': {'import': {'tagged': [],
                                     'subnets': [{'subnetId': 'subnet-0aa11bb22cc33dd44',
                                                  'state': 'available',
                                                  'tags': {'upbound.io/ctp-id': 'test-cp',
@@ -1740,11 +1740,11 @@ CASES = [
     # A Route's external name is {route-table-id}_{destination}, the form upjet's
     # aws_route GetIDFn computes from spec.forProvider. The r-<rt><hashcode> form
     # is Terraform's INTERNAL id, set only on create - earlier versions of this
-    # test had the two backwards. Adoption depends on neither (GetIDFn ignores
+    # test had the two backwards. Import depends on neither (GetIDFn ignores
     # the annotation); the value is emitted so the rendered annotation matches
     # what upjet writes back, since the r- form would be rewritten every
     # reconcile. rtb-066442f4ea6021c88 came off a real MR (eu-central-1).
-    {'name': 'adopt-derives-route-external-name',
+    {'name': 'import-derives-route-external-name',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
               'validate': True,
@@ -1752,7 +1752,7 @@ CASES = [
               # Supplied through the DESCRIBE, not the tag sweep: the sweep is not a
               # source for `rt`, because it indexes deleted route tables and a
               # phantom would poison both `rt` and the derived `route`.
-              'context': {'adopt': {'tagged': [],
+              'context': {'import': {'tagged': [],
                                     'subnets': [],
                                     'routeTables': [{'routeTableId': 'rtb-066442f4ea6021c88',
                                                      'tags': {'upbound.io/ctp-id': 'test-cp',
@@ -1778,12 +1778,12 @@ CASES = [
     # values below came off live MRs and sit ABOVE 2^31, where wrapping would
     # give 992159452 / 1902502648. The earlier vectors were all below the
     # boundary and could not tell the two apart - keep one on each side.
-    {'name': 'adopt-sg-rule-hash-is-unsigned-crc32',
+    {'name': 'import-sg-rule-hash-is-unsigned-crc32',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
               'validate': True,
               'timeoutSeconds': 60,
-              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:ec2:eu-central-1:609897127049:security-group/sg-0e6804c3dc226be29',
+              'context': {'import': {'tagged': [{'arn': 'arn:aws:ec2:eu-central-1:609897127049:security-group/sg-0e6804c3dc226be29',
                                                 'tags': {'upbound.io/ctp-id': 'test-cp',
                                                          'upbound.io/ctp-resource': 'sg'}}],
                                     'subnets': [],
@@ -1811,12 +1811,12 @@ CASES = [
     # what makes this discriminating: with the check the foreign one is dropped
     # and the asserted value is unambiguous; without it both are candidates, the
     # ambiguity guard refuses them, and the asserted key is absent.
-    {'name': 'adopt-refuses-foreign-ctp-id-in-tag-sweep',
+    {'name': 'import-refuses-foreign-ctp-id-in-tag-sweep',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
               'validate': True,
               'timeoutSeconds': 60,
-              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:vpc/vpc-0mine11223344556',
+              'context': {'import': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:vpc/vpc-0mine11223344556',
                                                 'tags': {'upbound.io/ctp-id': 'test-cp',
                                                          'upbound.io/ctp-resource': 'vpc'}},
                                                {'arn': 'arn:aws:ec2:us-east-1:123456789012:vpc/vpc-0other99887766554',
@@ -1844,12 +1844,12 @@ CASES = [
     # ctp-resource: vpc; the describe wins over the sweep, so without the
     # allow-list its subnet id would overwrite the real VPC id and a duplicate
     # VPC would be created. Asserting the correct value catches that.
-    {'name': 'adopt-ignores-mistagged-subnet-claiming-another-resource',
+    {'name': 'import-ignores-mistagged-subnet-claiming-another-resource',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
               'validate': True,
               'timeoutSeconds': 60,
-              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:vpc/vpc-0mine11223344556',
+              'context': {'import': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:vpc/vpc-0mine11223344556',
                                                 'tags': {'upbound.io/ctp-id': 'test-cp',
                                                          'upbound.io/ctp-resource': 'vpc'}}],
                                     'subnets': [{'subnetId': 'subnet-0mistagged1234',
@@ -1879,12 +1879,12 @@ CASES = [
     # accepts as unambiguous; the describe supplies the live one. Asserting the
     # live id for both keys is discriminating - without the overlay both carry
     # the dead id.
-    {'name': 'adopt-overlays-live-route-table-over-stale-tag-sweep',
+    {'name': 'import-overlays-live-route-table-over-stale-tag-sweep',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
               'validate': True,
               'timeoutSeconds': 60,
-              'context': {'adopt': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:route-table/rtb-0dead11223344556',
+              'context': {'import': {'tagged': [{'arn': 'arn:aws:ec2:us-east-1:123456789012:route-table/rtb-0dead11223344556',
                                                 'tags': {'upbound.io/ctp-id': 'test-cp',
                                                          'upbound.io/ctp-resource': 'rt'}}],
                                     'subnets': [],

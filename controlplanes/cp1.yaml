@@ -6,7 +6,7 @@ metadata:
 spec:
   crossplane:
     compositionRef:
-      name: controlplane-adopt.aws.platform.upbound.io
+      name: controlplane-import.aws.platform.upbound.io
   parameters:
     id: awsctpcp1
     managementMode: Provision

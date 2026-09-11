@@ -150,7 +150,7 @@ def add_irsa_resources(rsp, id_val, bucket_region, provider_config, oidc_host,
     }
     # RolePolicyAttachment does not accept AWS tags — annotation only.
     # RolePolicyAttachment has no forProvider.tags in its CRD, so it cannot
-    # carry an identity tag; it is adopted by its derived external-name instead.
+    # carry an identity tag; it is imported by its derived external-name instead.
     stamp(attachment, config)
     resource.update(rsp.desired.resources["backup-policy-attachment"], attachment)
 

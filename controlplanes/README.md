@@ -9,8 +9,8 @@ provisioning pipeline makes two passes over this folder, keying on the explicit
 mode (a file without a `managementMode` is ignored by both):
 
 - **reconcile** - control planes set to `Provision` or `ObserveOnly`:
-  created/adopted/updated, then orphaned on teardown.
-- **decommission** - control planes set to `Deprovision`: adopted, then deleted
+  created/imported/updated, then orphaned on teardown.
+- **decommission** - control planes set to `Deprovision`: imported, then deleted
   (AWS torn down).
 
 `tests/provision/reconcile` and `tests/provision/decommission` (Python E2E tests)
@@ -28,10 +28,10 @@ each load this folder and keep only their subset. The credential comes from
   is stamped as the `upbound.io/ctp-id` tag on every composed AWS resource, and it
   drives the names of the resources this configuration owns (`{id}-uxp`,
   `{id}-backup-irsa`, `{id}-k8gb-eip-N`). Changing it provisions a new control
-  plane instead of adopting the existing one.
-- `parameters.managementMode` (required here): `Provision` (create + adopt +
+  plane instead of importing the existing one.
+- `parameters.managementMode` (required here): `Provision` (create + import +
   update, never delete - the steady state for a persistent control plane),
-  `ObserveOnly` (adopt + watch, no changes), `Deprovision` (decommission - see
+  `ObserveOnly` (import + watch, no changes), `Deprovision` (decommission - see
   below). Omitting it defaults to `Full` at the XRD (standard lifecycle, not acted
   on by the pipeline), so always set an explicit mode here.
 - `parameters.naming: Deterministic` (required here). The default `Generated`
@@ -41,29 +41,29 @@ each load this folder and keep only their subset. The credential comes from
 - Immutable EKS fields (`nodes.instanceType`) reprovision via the backup +
   `installFrom` path, not in place.
 
-## AWS caveat: cross-run adoption is not free
+## AWS caveat: cross-run import is not free
 
-On Azure every managed resource has a deterministic name and adoption is
+On Azure every managed resource has a deterministic name and import is
 automatic. On AWS most identifiers are assigned by the cloud, so a fresh
 bootstrap cluster holds no way to find the resources it created last time.
 
-The adopt path closes this by tagging every owned resource and querying those
+The import path closes this by tagging every owned resource and querying those
 tags to inject `crossplane.io/external-name` before Crossplane reconciles (see
-"Adoption on AWS" in the top-level README). Selecting the Composition is the
+"Import on AWS" in the top-level README). Selecting the Composition is the
 whole opt-in - the filters are derived from `id`:
 
 ```yaml
 spec:
   crossplane:
     compositionRef:
-      name: controlplane-adopt.aws.platform.upbound.io
+      name: controlplane-import.aws.platform.upbound.io
   parameters:
     id: <id>
 ```
 
 It also needs an `aws-creds` Secret in `default`, which both provision suites
 create. The query steps read it from a static block in the Composition, which is
-why adopt is a separate Composition rather than a flag.
+why import is a separate Composition rather than a flag.
 
 Without that opt-in, this folder supports:
 
@@ -79,19 +79,19 @@ and does not support:
   orphaned.
 
 Treat a control plane provisioned without the identity tags as create-only:
-tagging is what makes it adoptable, and it cannot be applied retroactively by
+tagging is what makes it importable, and it cannot be applied retroactively by
 this configuration.
 
 > **Status.** Verified on real AWS 2026-09-10 against `configuration-aws-eks`
-> v2.2.1: provision, cross-run re-adopt and `Deprovision` all pass, with one of
-> each resource after re-adopt and AWS drained to zero on teardown. Requires
+> v2.2.1: provision, cross-run re-import and `Deprovision` all pass, with one of
+> each resource after re-import and AWS drained to zero on teardown. Requires
 > `naming: Deterministic` - under `Generated` a second run builds a second
 > cluster and three duplicate IAM roles.
 
 ## Migration: control planes provisioned before network v2.2.0
 
 `configuration-aws-network` used to compose a `MainRouteTableAssociation` (`mrt`)
-that made the composed route table the VPC's main one. It could not be adopted -
+that made the composed route table the VPC's main one. It could not be imported -
 it deletes by restoring `original_route_table_id`, which AWS never returns - so a
 stateless re-apply recorded the composed table as its own "original", and its
 delete left that table still main. Deleting a route table disassociates every
@@ -169,4 +169,4 @@ it again - 40-60 min of real AWS spend, reported as success.
 managementPolicies combination that omits `Create` - a delete-without-create policy
 is not a supported
 [combination](https://docs.crossplane.io/latest/managed-resources/managed-resources/#managementpolicies).
-It is also the adopt path. Removing the file is the only safeguard.
+It is also the import path. Removing the file is the only safeguard.

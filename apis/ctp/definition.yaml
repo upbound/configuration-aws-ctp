@@ -13,9 +13,9 @@ spec:
   # REQUIRED with two Compositions. An XR pinning neither compositionRef nor
   # compositionSelector otherwise gets one at RANDOM - Crossplane's selector
   # chain ends in a rand.Intn over every candidate matching the type - and the
-  # choice is persisted, so it is permanent. Landing on the adopt variant
+  # choice is persisted, so it is permanent. Landing on the import variant
   # without an aws-creds Secret in `default` means the XR never reconciles.
-  # Opt into adopt with compositionRef by name, or matchLabels {variant: adopt}.
+  # Opt into import with compositionRef by name, or matchLabels {variant: import}.
   defaultCompositionRef:
     name: controlplane.aws.platform.upbound.io
   versions:
@@ -37,9 +37,9 @@ spec:
                     minLength: 1
                     description: >-
                       ID of this ControlPlane that other objects will use to
-                      refer to it. Also the adoption key: it is stamped as the
+                      refer to it. Also the import identity: it is stamped as the
                       upbound.io/ctp-id tag on every AWS resource this
-                      configuration owns, and the adopt path re-checks that tag
+                      configuration owns, and the import path re-checks that tag
                       before injecting any identifier. Non-empty because an
                       empty key would match nothing and disable that check.
                   region:
@@ -310,12 +310,12 @@ spec:
                       How Crossplane reconciles this control plane's resources.
                       Full (default) manages the entire lifecycle including
                       deletion (standard Crossplane behavior). Provision creates
-                      and adopts resources and keeps them updated but never
+                      and imports resources and keeps them updated but never
                       deletes them, so the control plane persists (orphans) when
-                      this XR is removed and is re-adopted on the next apply -
+                      this XR is removed and is re-imported on the next apply -
                       used by the dynamic-provisioning pipeline. ObserveOnly
-                      adopts and watches without making changes (safe take-over).
-                      Deprovision is the pipeline's decommission signal: it adopts
+                      imports and watches without making changes (safe take-over).
+                      Deprovision is the pipeline's decommission signal: it imports
                       and deletes (Create/Observe/Delete) without Update, so a
                       drifted control plane is torn down rather than reconciled.
                       An explicitly set managementPolicies wins over this field.
@@ -332,7 +332,7 @@ spec:
                       EKS XR. Generated (the default) lets Crossplane assign
                       {xr-name}-{random}, which is what every existing deployment
                       uses. Deterministic derives names from `id`, making the EKS
-                      cluster, its three IAM roles and the node group adoptable by
+                      cluster, its three IAM roles and the node group importable by
                       name with no AWS query - and the addons and access entries
                       too, since their identifiers are templated from the cluster
                       name. WARNING: changing this on a live control plane is

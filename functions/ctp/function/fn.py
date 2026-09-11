@@ -19,7 +19,7 @@ ordered section it corresponds to):
   certmanager.py        (09a) always-on cert-manager Helm Release
   knative.py            (09) knative-operator + serving CR
   runtime_config.py     (10) UpboundRuntimeConfig (ProviderVPA + Knative caps)
-  adopt.py              (11) external-name discovery for the adopt Composition
+  imports.py              (11) external-name discovery for the import Composition
   status.py             (99) XR status writeback + ClaimConditions
 
 Cluster metadata (OIDC issuer/ARN, running node-group instance type) is read
@@ -35,9 +35,9 @@ from crossplane.function import logging, resource, response
 from crossplane.function.proto.v1 import run_function_pb2 as fnv1
 from crossplane.function.proto.v1 import run_function_pb2_grpc as grpcv1
 
-from .adopt import (
+from .imports import (
     apply_external_names,
-    build_adopt_filters,
+    build_import_filters,
     build_external_names,
     eks_external_names,
     network_external_names,
@@ -80,7 +80,7 @@ from .vpa import add_vpa_resources
 # managementMode -> Crossplane managementPolicies. Provision and ObserveOnly
 # never include Delete, so the provisioned control plane is orphaned (never torn
 # down) when the XR is removed. Full (default) is the standard "*" lifecycle.
-# Deprovision is the pipeline's decommission signal: adopt (Observe/Create) and
+# Deprovision is the pipeline's decommission signal: import (Observe/Create) and
 # Delete, but no Update/LateInitialize - a drifted or broken cluster must not have
 # changes pushed to it on the way out, only be torn down.
 _MODE_POLICIES = {
@@ -113,8 +113,8 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     # own namespace. Falls back to "default" when unset.
     config["namespace"] = xr.get("metadata", {}).get("namespace") or "default"
 
-    # The adoption key. stamp() writes it to spec.forProvider.tags on every AWS
-    # resource this configuration owns; the adopt path queries on it.
+    # The import key. stamp() writes it to spec.forProvider.tags on every AWS
+    # resource this configuration owns; the import path queries on it.
     config["ctp_id"] = params.get("id", "")
 
     id_val = params.get("id", "")
@@ -217,12 +217,12 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     ng_actual_type = get_nodegroup_actual_type(observed_resources)
     ng_type_mismatch = bool(ng_actual_type) and ng_actual_type != nodes.get("instanceType", "")
 
-    # --- Adopt: external-names discovered by function-aws-query ---
-    # Only the adopt Composition fills context.adopt; on the default Composition
+    # --- Import: external-names discovered by function-aws-query ---
+    # Only the import Composition fills context.import; on the default Composition
     # this is an empty dict, external_names is empty, and every use is a no-op.
-    adopt_ctx = context_dict.get("adopt", {})
+    import_ctx = context_dict.get("import", {})
     # Bounds which subnet-*/rta-* keys may be discovered: an unknown one aborts
-    # the Network composition. See adopt.network_external_names.
+    # the Network composition. See import.network_external_names.
     network_subnets = resolve_subnets(network_param, region)
     # The Pod Identity tag sweep must scope by cluster on the FIRST reconcile.
     # cluster_name above comes from the EKS XR status, which is empty until the
@@ -230,11 +230,11 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     # association with no external-name. That 409s on the live one and upjet
     # never re-Observes, so the association is wedged for good (measured
     # 2026-09-09). Deterministic naming makes the name derivable up front, and
-    # adoption already requires it.
-    adopt_cluster_name = cluster_name or (
+    # import already requires it.
+    import_cluster_name = cluster_name or (
         "{}-eks".format(id_val) if naming == "Deterministic" else "")
     external_names = build_external_names(
-        adopt_ctx, id_val, adopt_cluster_name, cluster_account_id, oidc_host,
+        import_ctx, id_val, import_cluster_name, cluster_account_id, oidc_host,
         subnets=network_subnets)
 
     # --- Compose resources ---
@@ -318,7 +318,7 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
         _res["spec"]["managementPolicies"] = mgmt_policies
         resource.update(rsp.desired.resources[_name], _res)
 
-    # --- Adopt: inject the external-names discovered above ---
+    # --- Import: inject the external-names discovered above ---
     apply_external_names(rsp, external_names)
 
     update_status(rsp, id_val, params, uxp_version, uxp_deployed, backup,
@@ -328,32 +328,32 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
                   license_conflict, config)
 
 
-# The adopt Composition invokes this function twice. The first invocation runs
+# The import Composition invokes this function twice. The first invocation runs
 # ahead of the function-aws-query steps to derive their filters into the
 # context; the second composes as usual. The step's `input` says which, because
 # a function cannot otherwise tell its invocations apart.
-_PREPARE_FILTERS_KIND = "AdoptFilters"
+_PREPARE_FILTERS_KIND = "ImportFilters"
 
 
-def prepare_adopt_filters(req: fnv1.RunFunctionRequest,
+def prepare_import_filters(req: fnv1.RunFunctionRequest,
                           rsp: fnv1.RunFunctionResponse):
-    """Write the discovery filters to context.adopt.filters.
+    """Write the discovery filters to context.import.filters.
 
     Composes nothing; response.to already passed the desired state through.
-    Coexists with the query results landing under context.adopt later, because
+    Coexists with the query results landing under context.import later, because
     function-aws-query sets only the leaf of its target path.
     """
     xr = resource.struct_to_dict(req.observed.composite.resource)
     id_val = xr.get("spec", {}).get("parameters", {}).get("id", "")
-    filters = build_adopt_filters(id_val)
+    filters = build_import_filters(id_val)
     if not filters:
         # Unreachable via the XRD (minLength 1 on id). Fatal rather than silent:
         # an unresolvable filtersRef makes GetResources read the whole region.
         response.fatal(
-            rsp, "cannot derive adopt filters: spec.parameters.id is empty")
+            rsp, "cannot derive import filters: spec.parameters.id is empty")
         return
     context = resource.struct_to_dict(req.context) or {}
-    context.setdefault("adopt", {})["filters"] = filters
+    context.setdefault("import", {})["filters"] = filters
     rsp.context.Clear()
     rsp.context.update(context)
 
@@ -372,8 +372,8 @@ class FunctionRunner(grpcv1.FunctionRunnerService):
         log = self.log.bind(tag=req.meta.tag)
         rsp = response.to(req)
         if resource.struct_to_dict(req.input).get("kind") == _PREPARE_FILTERS_KIND:
-            log.info("Deriving adopt filters")
-            prepare_adopt_filters(req, rsp)
+            log.info("Deriving import filters")
+            prepare_import_filters(req, rsp)
             return rsp
         log.info("Running function")
         compose(req, rsp)
