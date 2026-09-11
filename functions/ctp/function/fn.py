@@ -131,11 +131,8 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     backup = params.get("backup", {"enabled": "no"})
     install_from = backup.get("installFrom")
     license_param = params.get("license")
-    # managementPolicies is published API and stays the escape hatch: when set
-    # explicitly it wins, otherwise managementMode supplies the policy array.
     management_mode = params.get("managementMode", "Full")
-    mgmt_policies = params.get("managementPolicies") or _MODE_POLICIES.get(
-        management_mode, _MODE_POLICIES["Full"])
+    mgmt_policies = _MODE_POLICIES.get(management_mode, _MODE_POLICIES["Full"])
     naming = params.get("naming", "Generated")
     uxp_version = params.get("uxp", {}).get("version", "2.2.1-up.1")
     vpa = params.get("providerVerticalPodAutoscaling")

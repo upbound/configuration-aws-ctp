@@ -289,22 +289,6 @@ spec:
                       url:
                         type: string
                         description: Public git repository URL for the root app-of-apps Application.
-                  managementPolicies:
-                    description: >-
-                      ManagementPolicies for resources. Defaults to ["*"] which includes all
-                      operations. Deliberately carries no schema default: an absent value is
-                      what lets managementMode supply the policy array, and a defaulted
-                      ["*"] would silently mask every mode.
-                    type: array
-                    items:
-                      type: string
-                      enum:
-                      - "*"
-                      - Create
-                      - Observe
-                      - Update
-                      - Delete
-                      - LateInitialize
                   managementMode:
                     description: >-
                       How Crossplane reconciles this control plane's resources.
@@ -318,7 +302,6 @@ spec:
                       Deprovision is the pipeline's decommission signal: it imports
                       and deletes (Create/Observe/Delete) without Update, so a
                       drifted control plane is torn down rather than reconciled.
-                      An explicitly set managementPolicies wins over this field.
                     type: string
                     enum:
                     - Provision

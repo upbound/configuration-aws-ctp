@@ -1318,27 +1318,6 @@ CASES = [
                                                                                   'Create',
                                                                                   'Update',
                                                                                   'LateInitialize']}}}]}},
-    # An explicit managementPolicies wins over managementMode, so the published
-    # parameter keeps working as an escape hatch.
-    {'name': 'management-policies-overrides-mode',
-     'spec': {'compositionPath': 'apis/ctp/composition.yaml',
-              'xrdPath': 'apis/ctp/definition.yaml',
-              'validate': True,
-              'timeoutSeconds': 60,
-              'xr': {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
-                     'kind': 'ControlPlane',
-                     'metadata': {'name': 'test-cp'},
-                     'spec': {'parameters': {'id': 'test-cp',
-                                             'region': 'us-east-1',
-                                             'version': '1.34',
-                                             'managementMode': 'Provision',
-                                             'managementPolicies': ['Observe'],
-                                             'nodes': {'count': 2,
-                                                       'instanceType': 't3.small'}}}},
-              'assertResources': [{'apiVersion': 'aws.platform.upbound.io/v1alpha1',
-                                   'kind': 'Network',
-                                   'metadata': {'name': 'test-cp'},
-                                   'spec': {'parameters': {'managementPolicies': ['Observe']}}}]}},
     # Comprehensive orphan: the XR's policy reaches every composed resource that
     # has external state (helm Releases included), so a no-Delete teardown does
     # not uninstall UXP from the surviving cluster. Resources with a deliberate
