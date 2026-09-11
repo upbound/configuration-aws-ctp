@@ -41,7 +41,7 @@ def add_eks_resource(rsp, id_val, region, provider_config, version, nodes,
 
     # Cluster, node group and the IAM roles are name-as-identifier, so upstream
     # deterministic naming covers them; the Pod Identity association is not, and
-    # comes from the adopt map. Inert until configuration-aws-eks supports it.
+    # comes from the adopt map.
     if external_names:
         eks["spec"]["parameters"]["externalNames"] = external_names
 
