@@ -37,7 +37,7 @@ def add_irsa_resources(rsp, id_val, bucket_region, provider_config, oidc_host,
             }
         }
     }
-    stamp(oidc_provider, config, aws_tags=True)
+    stamp(oidc_provider, config, aws_tags=True, resource_tag="oidc-provider")
     resource.update(rsp.desired.resources["oidc-provider"], oidc_provider)
 
     trust_policy = {
@@ -78,7 +78,7 @@ def add_irsa_resources(rsp, id_val, bucket_region, provider_config, oidc_host,
             }
         }
     }
-    stamp(iam_role, config, aws_tags=True)
+    stamp(iam_role, config, aws_tags=True, resource_tag="backup-irsa-role")
     resource.update(rsp.desired.resources["backup-irsa-role"], iam_role)
 
     policy_doc = {
@@ -120,7 +120,7 @@ def add_irsa_resources(rsp, id_val, bucket_region, provider_config, oidc_host,
             }
         }
     }
-    stamp(iam_policy, config, aws_tags=True)
+    stamp(iam_policy, config, aws_tags=True, resource_tag="backup-s3-policy")
     resource.update(rsp.desired.resources["backup-s3-policy"], iam_policy)
 
     attachment = {
@@ -149,6 +149,8 @@ def add_irsa_resources(rsp, id_val, bucket_region, provider_config, oidc_host,
         }
     }
     # RolePolicyAttachment does not accept AWS tags — annotation only.
+    # RolePolicyAttachment has no forProvider.tags in its CRD, so it cannot
+    # carry an identity tag; it is imported by its derived external-name instead.
     stamp(attachment, config)
     resource.update(rsp.desired.resources["backup-policy-attachment"], attachment)
 

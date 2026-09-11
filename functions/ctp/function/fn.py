@@ -19,6 +19,7 @@ ordered section it corresponds to):
   certmanager.py        (09a) always-on cert-manager Helm Release
   knative.py            (09) knative-operator + serving CR
   runtime_config.py     (10) UpboundRuntimeConfig (ProviderVPA + Knative caps)
+  imports.py              (11) external-name discovery for the import Composition
   status.py             (99) XR status writeback + ClaimConditions
 
 Cluster metadata (OIDC issuer/ARN, running node-group instance type) is read
@@ -34,6 +35,13 @@ from crossplane.function import logging, resource, response
 from crossplane.function.proto.v1 import run_function_pb2 as fnv1
 from crossplane.function.proto.v1 import run_function_pb2_grpc as grpcv1
 
+from .imports import (
+    apply_external_names,
+    build_import_filters,
+    build_external_names,
+    eks_external_names,
+    network_external_names,
+)
 from .argo import add_argocd_resources
 from .backup import add_backup_resources
 from .certmanager import add_certmanager_resources
@@ -44,7 +52,7 @@ from .k8gb import add_k8gb_resources
 from .knative import add_knative_resources
 from .lbcontroller import add_lbcontroller_resources
 from .licensing import add_license_resources
-from .network import add_network_resource
+from .network import add_network_resource, resolve_subnets
 from .prelude import (
     build_manager_args,
     check_license_conflict,
@@ -69,6 +77,20 @@ from .uxp import add_uxp_release
 from .vpa import add_vpa_resources
 
 
+# managementMode -> Crossplane managementPolicies. Provision and ObserveOnly
+# never include Delete, so the provisioned control plane is orphaned (never torn
+# down) when the XR is removed. Full (default) is the standard "*" lifecycle.
+# Deprovision is the pipeline's decommission signal: import (Observe/Create) and
+# Delete, but no Update/LateInitialize - a drifted or broken cluster must not have
+# changes pushed to it on the way out, only be torn down.
+_MODE_POLICIES = {
+    "Provision": ["Observe", "Create", "Update", "LateInitialize"],
+    "ObserveOnly": ["Observe"],
+    "Full": ["*"],
+    "Deprovision": ["Create", "Delete", "Observe"],
+}
+
+
 def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     """Main composition function entry point."""
     # Capture the reconciliation timestamp once and thread it through every
@@ -91,6 +113,10 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     # own namespace. Falls back to "default" when unset.
     config["namespace"] = xr.get("metadata", {}).get("namespace") or "default"
 
+    # The import key. stamp() writes it to spec.forProvider.tags on every AWS
+    # resource this configuration owns; the import path queries on it.
+    config["ctp_id"] = params.get("id", "")
+
     id_val = params.get("id", "")
     region = params.get("region", "")
     provider_config = params.get("providerConfigName", "default")
@@ -105,7 +131,9 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     backup = params.get("backup", {"enabled": "no"})
     install_from = backup.get("installFrom")
     license_param = params.get("license")
-    mgmt_policies = params.get("managementPolicies", ["*"])
+    management_mode = params.get("managementMode", "Full")
+    mgmt_policies = _MODE_POLICIES.get(management_mode, _MODE_POLICIES["Full"])
+    naming = params.get("naming", "Generated")
     uxp_version = params.get("uxp", {}).get("version", "2.2.1-up.1")
     vpa = params.get("providerVerticalPodAutoscaling")
     knative = params.get("knative")
@@ -186,11 +214,35 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     ng_actual_type = get_nodegroup_actual_type(observed_resources)
     ng_type_mismatch = bool(ng_actual_type) and ng_actual_type != nodes.get("instanceType", "")
 
+    # --- Import: external-names discovered by function-aws-query ---
+    # Only the import Composition fills context.import; on the default Composition
+    # this is an empty dict, external_names is empty, and every use is a no-op.
+    import_ctx = context_dict.get("import", {})
+    # Bounds which subnet-*/rta-* keys may be discovered: an unknown one aborts
+    # the Network composition. See import.network_external_names.
+    network_subnets = resolve_subnets(network_param, region)
+    # The Pod Identity tag sweep must scope by cluster on the FIRST reconcile.
+    # cluster_name above comes from the EKS XR status, which is empty until the
+    # cluster reports - a window the EKS composition can use to create the
+    # association with no external-name. That 409s on the live one and upjet
+    # never re-Observes, so the association is wedged for good (measured
+    # 2026-09-09). Deterministic naming makes the name derivable up front, and
+    # import already requires it.
+    import_cluster_name = cluster_name or (
+        "{}-eks".format(id_val) if naming == "Deterministic" else "")
+    external_names = build_external_names(
+        import_ctx, id_val, import_cluster_name, cluster_account_id, oidc_host,
+        subnets=network_subnets)
+
     # --- Compose resources ---
     add_network_resource(rsp, id_val, region, provider_config, mgmt_policies,
-                         network_param, config)
+                         network_param, config,
+                         external_names=network_external_names(
+                             external_names, network_subnets))
     add_eks_resource(rsp, id_val, region, provider_config, version, nodes,
-                     access_config, mgmt_policies, iam_param, config)
+                     access_config, mgmt_policies, iam_param, config,
+                     naming=naming,
+                     external_names=eks_external_names(external_names))
     add_uxp_release(rsp, id_val, uxp_version, uxp_deployed, mgr_args, config)
     add_usage_resources(rsp, id_val, config, k8gb_enabled=k8gb_enabled,
                         argocd_enabled=argocd_enabled,
@@ -248,11 +300,59 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
         add_runtime_config(rsp, id_val, vpa, knative, vpa_ready,
                            knative_fully_ready, config)
 
+    # --- Comprehensive orphan policy ---
+    # Every composed managed resource (helm Release, provider-kubernetes Object,
+    # and AWS MRs all carry spec.forProvider) inherits mgmt_policies, so
+    # Provision/ObserveOnly never delete the provisioned control plane on
+    # teardown. Resources with an explicit policy (backup bucket, k8gb CoreDNS
+    # observe, knative serving) and composed XRs / Usage guards (no forProvider)
+    # are left untouched.
+    for _name in list(rsp.desired.resources.keys()):
+        _res = resource.struct_to_dict(rsp.desired.resources[_name].resource)
+        _spec = _res.get("spec", {})
+        if "forProvider" not in _spec or "managementPolicies" in _spec:
+            continue
+        _res["spec"]["managementPolicies"] = mgmt_policies
+        resource.update(rsp.desired.resources[_name], _res)
+
+    # --- Import: inject the external-names discovered above ---
+    apply_external_names(rsp, external_names)
+
     update_status(rsp, id_val, params, uxp_version, uxp_deployed, backup,
                   role_arn, bucket_name, observed_resources, nodes,
                   ng_actual_type, ng_type_mismatch, vpa, knative,
                   k8gb, k8gb_geo_tag, k8gb_eip_ips, k8gb_eip_count,
                   license_conflict, config)
+
+
+# The import Composition invokes this function twice. The first invocation runs
+# ahead of the function-aws-query steps to derive their filters into the
+# context; the second composes as usual. The step's `input` says which, because
+# a function cannot otherwise tell its invocations apart.
+_PREPARE_FILTERS_KIND = "ImportFilters"
+
+
+def prepare_import_filters(req: fnv1.RunFunctionRequest,
+                          rsp: fnv1.RunFunctionResponse):
+    """Write the discovery filters to context.import.filters.
+
+    Composes nothing; response.to already passed the desired state through.
+    Coexists with the query results landing under context.import later, because
+    function-aws-query sets only the leaf of its target path.
+    """
+    xr = resource.struct_to_dict(req.observed.composite.resource)
+    id_val = xr.get("spec", {}).get("parameters", {}).get("id", "")
+    filters = build_import_filters(id_val)
+    if not filters:
+        # Unreachable via the XRD (minLength 1 on id). Fatal rather than silent:
+        # an unresolvable filtersRef makes GetResources read the whole region.
+        response.fatal(
+            rsp, "cannot derive import filters: spec.parameters.id is empty")
+        return
+    context = resource.struct_to_dict(req.context) or {}
+    context.setdefault("import", {})["filters"] = filters
+    rsp.context.Clear()
+    rsp.context.update(context)
 
 
 class FunctionRunner(grpcv1.FunctionRunnerService):
@@ -267,7 +367,11 @@ class FunctionRunner(grpcv1.FunctionRunnerService):
     ) -> fnv1.RunFunctionResponse:
         """Build a response, run the composition, and return it."""
         log = self.log.bind(tag=req.meta.tag)
-        log.info("Running function")
         rsp = response.to(req)
+        if resource.struct_to_dict(req.input).get("kind") == _PREPARE_FILTERS_KIND:
+            log.info("Deriving import filters")
+            prepare_import_filters(req, rsp)
+            return rsp
+        log.info("Running function")
         compose(req, rsp)
         return rsp

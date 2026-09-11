@@ -101,7 +101,8 @@ spec:
 | `k8gb` | no | Enable k8gb global failover — see below. |
 | `argocd` | no | Enable ArgoCD (GitOps app-of-apps) — see below. |
 | `providerVerticalPodAutoscaling` | no | Enable VPA for UXP providers (CPU/memory bounds). |
-| `managementPolicies` | no | Crossplane management policies (default `["*"]`). |
+| `managementMode` | no | Lifecycle: `Full` (default, standard), `Provision` (create/import/update, never delete), `ObserveOnly` (watch only), `Deprovision` (import and delete). See below. |
+| `naming` | no | How the composed EKS resources are named, forwarded to the EKS XR: `Generated` (default) or `Deterministic` (names derived from `id`, so the cluster, its three IAM roles and the node group are importable by name with no AWS query). Destructive to change on a live control plane - Crossplane cannot rename a composed resource, so it deletes the EKS cluster and builds a replacement. |
 
 > **cert-manager** is installed unconditionally on every control plane (a free
 > dependency of Knative/k8gb/ArgoCD Gateway TLS). **Envoy Gateway (Gateway API)**
@@ -171,3 +172,95 @@ up test run tests/* --e2e
 ```
 
 In CI, e2e runs only on pull requests labeled `run-e2e-tests` (see `.github/workflows/e2e.yaml`).
+
+## Managed Resource Activation Policy
+
+This configuration includes a `ManagedResourceActivationPolicy` (MRAP) that enables only the required CRDs from dependent providers. If you're running Crossplane without a default activation policy, this ensures that only the necessary CRDs are activated, reducing resource overhead and improving control plane performance.
+
+To view the MRAP:
+```bash
+kubectl get managedresourceactivationpolicy configuration-aws-ctp -o yaml
+```
+
+## Dynamic control-plane provisioning
+
+`controlplanes/*.yaml` declares persistent EKS+UXP control planes as
+`ControlPlane` XRs. `.github/workflows/provision.yaml` (manual dispatch) stands
+up a disposable local KIND bootstrap and reconciles or decommissions them
+according to each file's `managementMode`. See `controlplanes/README.md`.
+
+Two layers are involved:
+
+| Layer | What it is | Lifecycle |
+|---|---|---|
+| Management (bootstrap) | Local KIND + UXP running this package | Ephemeral: created and destroyed each run |
+| Provisioned (product) | The EKS cluster with UXP + add-ons installed on it | Persistent: created once, imported and updated thereafter |
+
+### Import on AWS
+
+On Azure a stateless bootstrap re-imports by deterministic name. AWS assigns most
+resource identifiers itself, so import has to be manufactured: every AWS
+resource this configuration owns is tagged `upbound.io/ctp-id: <id>` and
+`upbound.io/ctp-resource: <logical name>`, and the import path queries those tags
+to inject `crossplane.io/external-name` before Crossplane reconciles.
+
+A resource provisioned without those tags is not importable. Tag before you
+provision anything you intend to keep - the tags cannot be applied retroactively
+by this configuration.
+
+Discovery uses two sources, because the tag query alone is not sufficient:
+
+| Source | Finds | Why both |
+|---|---|---|
+| Resource Groups Tagging API | Every taggable resource in one server-side call | Broad, but it keeps returning deleted resources under the same tag, which makes a logical name ambiguous |
+| `DescribeSubnets` / `DescribeRouteTables` | Live subnets, and route-table associations | Returns only live resources, so it settles that ambiguity; associations carry no tags and the Tagging API does not index them at all |
+
+The import Composition inserts four steps before `ctp`:
+
+| Step | Function | Leaves in context |
+|---|---|---|
+| `prepare-import-filters` | ctp (mode selected by its `input`) | `import.filters.{tagged,ec2}` |
+| `discover-tagged` | aws-query `GetResources` | `import.tagged` |
+| `discover-subnets` | aws-query `DescribeSubnets` | `import.subnets` |
+| `discover-route-tables` | aws-query `DescribeRouteTables` | `import.routeTables` |
+
+`ctp` then reads all four and stamps `crossplane.io/external-name`. The context is
+per-reconcile scratch space; nothing is persisted.
+
+Everything comes from `spec.parameters.id`: the `upbound.io/ctp-id` tag, both
+filter shapes, the identity re-check, and the `oidc-provider` /
+`backup-policy-attachment` names.
+
+Nothing the queries return is trusted. Every entry is re-checked before use:
+
+| Check | Why |
+|---|---|
+| `upbound.io/ctp-id` must equal this control plane's `id` | Shared account: one other control plane is otherwise enough to make its VPC the only candidate for `vpc`, so unambiguous, so imported |
+| the logical name must be one this configuration emits | `upbound.io/ctp-resource` is an ordinary AWS tag, and its value picks which resource an identifier lands on |
+| a subnet must still be in this control plane's layout | A subnet orphaned by an earlier layout is live and correctly tagged, and forwarding its key aborts the whole `Network` composition |
+| ambiguity is refused, and an empty `id` imports nothing | A dead identifier is the duplicate import exists to prevent, plus a confusing error |
+
+The filters being derived rather than configured is deliberate: a filter that
+does not scope to this control plane cannot be written.
+
+```yaml
+spec:
+  crossplane:
+    compositionRef:
+      name: controlplane-import.aws.platform.upbound.io
+  parameters:
+    id: awsctpcp1
+    managementMode: Provision
+```
+
+Selecting the Composition is the whole opt-in. It also needs an `aws-creds`
+Secret in `default` - the query steps read credentials from a static block in
+the Composition, which is why import is a separate Composition rather than a flag.
+
+The two database `SecurityGroupRule`s are the one exception: their external-name
+is a Terraform-computed `sgrule-<crc32>` hash rather than an AWS identifier, so
+no query can return it and the import path computes it from the discovered
+security-group id instead. Only the annotation's presence is load-bearing: the
+provider matches a rule by its ports, protocol, type and CIDRs and never
+validates the hash. It is computed correctly anyway, so the rendered annotation
+matches what the provider would have written.

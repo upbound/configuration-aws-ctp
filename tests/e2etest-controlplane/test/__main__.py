@@ -28,7 +28,10 @@ test = e2etest.E2ETest(
     metadata=k8s.ObjectMeta(name="controlplane"),
     spec=e2etest.Spec(
         crossplane=e2etest.Crossplane(
-            autoUpgrade=e2etest.AutoUpgrade(channel="Stable"),
+            # Pinned to v2: the composed ManagedResourceActivationPolicy CRD does
+            # not exist on the v1 line, which Stable can resolve to.
+            autoUpgrade=e2etest.AutoUpgrade(channel="None"),
+            version="2.1.4-up.2",
         ),
         defaultConditions=["Ready"],
         timeoutSeconds=5400,
