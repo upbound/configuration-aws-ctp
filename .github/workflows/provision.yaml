@@ -57,6 +57,10 @@ jobs:
           decommission=false
           for f in controlplanes/*.yaml; do
             [ -f "$f" ] || continue
+            # Both generators skip *.tmpl.yaml. Classifying one here would start a
+            # pass whose generator then filters the file out, and an empty test set
+            # is a hard SystemExit whose message points at credentials, not at this.
+            case "$f" in *.tmpl.yaml) continue ;; esac
             # Parse with yq so classification agrees with the generators'
             # yaml.safe_load by construction: same path, same YAML semantics
             # (flow mappings, quoted scalars, comments). yq ships on ubuntu-latest.
