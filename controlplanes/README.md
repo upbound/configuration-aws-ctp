@@ -167,8 +167,8 @@ A file left at `Deprovision` is not inert. The policy keeps `Create`, so the
 next dispatch re-creates the entire control plane, waits for `Ready`, and destroys
 it again - 40-60 min of real AWS spend, reported as success.
 
-`Create` cannot be dropped to prevent this. Crossplane defines no Delete-capable
-managementPolicies combination that omits `Create` - a delete-without-create policy
-is not a supported
-[combination](https://docs.crossplane.io/latest/managed-resources/managed-resources/#managementpolicies).
-It is also the import path. Removing the file is the only safeguard.
+`["Observe", "Delete"]` is a supported policy, but dropping `Create` needs every
+composed resource to be importable by Observe alone: any resource whose
+external-name discovery misses is imported only by an idempotent `Create`, and
+without it would neither reach `Ready` nor be deleted. Until then, removing the
+file is the only safeguard.

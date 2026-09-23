@@ -45,7 +45,20 @@ CASES = [
                                    'kind': 'Usage',
                                    'metadata': {'name': 'test-cp-usage-eks-network'},
                                    'spec': {'of': {'kind': 'Network'},
-                                            'by': {'kind': 'EKS'}}}]}},
+                                            'by': {'kind': 'EKS'}}},
+                                  # The complete composed set. assertResources checks
+                                  # only what it names, so this list (exact length,
+                                  # sorted by apiVersion/kind/name) is what catches a
+                                  # surplus resource.
+                                  {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                                   'kind': 'ControlPlane',
+                                   'metadata': {'name': 'test-cp'},
+                                   'spec': {'crossplane': {'resourceRefs': [{'kind': 'EKS', 'name': 'test-cp'},
+                                                                            {'kind': 'Network', 'name': 'test-cp'},
+                                                                            {'kind': 'Release', 'name': 'test-cp-certmanager'},
+                                                                            {'kind': 'Release', 'name': 'test-cp-uxp'},
+                                                                            {'kind': 'Usage', 'name': 'test-cp-usage-eks-network'},
+                                                                            {'kind': 'Usage', 'name': 'test-cp-usage-release-eks'}]}}}]}},
     # No network param -> resilient three-AZ default: public + private /19 subnets across <region>a/b/c inside a 192.168.0.0/16 VPC.
     {'name': 'network-three-az-default',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
@@ -1407,10 +1420,11 @@ CASES = [
                                    'spec': {'forProvider': {'region': 'us-east-1',
                                                             'tags': {'upbound.io/ctp-id': 'test-cp',
                                                                      'upbound.io/ctp-resource': 'k8gb-eip-0'}}}}]}},
-    # naming defaults to Generated, so the EKS XR must not receive the parameter
-    # at all. Changing metadata.name on a live composed resource makes Crossplane
-    # delete the AWS object and create a new one, so the default has to be inert.
-    {'name': 'naming-default-not-forwarded',
+    # naming defaults to Generated and is forwarded explicitly. Inert: aws-eks
+    # v2.2.1 defaults it to Generated too and reads (naming or "Generated"), so
+    # the EKS layer renders exactly as with the parameter absent. It has to be -
+    # renaming a live composed resource deletes and re-creates the AWS object.
+    {'name': 'naming-default-forwarded-as-generated',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
               'validate': True,
@@ -1453,10 +1467,10 @@ CASES = [
     #
     # Rendered against the default Composition on purpose. The ctp function reads
     # context.import regardless of which Composition invoked it, so this covers the
-    # same code path, while apis/ctp/composition-import.yaml cannot be rendered
-    # offline at all: function-aws-query returns a fatal result when its AWS call
-    # fails, so its steps need live credentials and real AWS calls even when the
-    # test supplies the context they would have produced.
+    # same code path. apis/ctp/composition-import.yaml is not rendered here: its
+    # function-aws-query steps return a fatal result unless the AWS calls
+    # succeed, which needs credentials (functionCredentialsPath) and an endpoint
+    # to answer them (AWS_ENDPOINT_URL pointed at moto).
     {'name': 'import-injects-eip-external-name',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
@@ -1579,7 +1593,17 @@ CASES = [
                                   {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
                                    'kind': 'EKS',
                                    'metadata': {'name': 'test-cp'},
-                                   'spec': {'parameters': {'externalNames': {'ebsCSIDriverPodIdentityAssociation': 'a-abcdefghij1234567'}}}}]}},
+                                   'spec': {'parameters': {'externalNames': {'ebsCSIDriverPodIdentityAssociation': 'a-abcdefghij1234567'}}}},
+                                  # Import composes nothing extra: same set as `basic`.
+                                  {'apiVersion': 'aws.platform.upbound.io/v1alpha1',
+                                   'kind': 'ControlPlane',
+                                   'metadata': {'name': 'test-cp'},
+                                   'spec': {'crossplane': {'resourceRefs': [{'kind': 'EKS', 'name': 'test-cp'},
+                                                                            {'kind': 'Network', 'name': 'test-cp'},
+                                                                            {'kind': 'Release', 'name': 'test-cp-certmanager'},
+                                                                            {'kind': 'Release', 'name': 'test-cp-uxp'},
+                                                                            {'kind': 'Usage', 'name': 'test-cp-usage-eks-network'},
+                                                                            {'kind': 'Usage', 'name': 'test-cp-usage-release-eks'}]}}}]}},
     # The Pod Identity association must be scoped to THIS cluster on the first
     # reconcile, before the EKS XR reports status.eks.clusterArn. There is no
     # observed EKS XR here, so cluster_name is only available if it is derived
