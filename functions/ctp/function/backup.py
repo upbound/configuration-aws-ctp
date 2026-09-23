@@ -16,7 +16,14 @@ def add_backup_resources(rsp, id_val, bucket_region, provider_config,
     # S3 Bucket — import-only. Delete is intentionally absent from
     # managementPolicies: deleting the XR removes this MR but leaves the AWS
     # bucket (and the backup data) intact. bucket_region may differ from the
-    # cluster region for cross-region DR.
+    # cluster region for cross-region DR. ObserveOnly makes no changes and
+    # Deprovision pushes no Update; Deprovision keeps Create like every other
+    # resource under it, so a missing bucket does not hold the XR off Ready.
+    bucket_policies = {
+        "ObserveOnly": ["Observe"],
+        "Deprovision": ["Observe", "Create"],
+    }.get(config.get("management_mode"),
+          ["Observe", "Create", "Update", "LateInitialize"])
     bucket = {
         "apiVersion": "s3.aws.m.upbound.io/v1beta1",
         "kind": "Bucket",
@@ -29,7 +36,7 @@ def add_backup_resources(rsp, id_val, bucket_region, provider_config,
             }
         },
         "spec": {
-            "managementPolicies": ["Observe", "Create", "Update", "LateInitialize"],
+            "managementPolicies": bucket_policies,
             "forProvider": {
                 "region": bucket_region
             },

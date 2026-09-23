@@ -134,6 +134,7 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     license_param = params.get("license")
     management_mode = params.get("managementMode", "Full")
     mgmt_policies = _MODE_POLICIES.get(management_mode, _MODE_POLICIES["Full"])
+    config["management_mode"] = management_mode
     naming = params.get("naming", "Generated")
     uxp_version = params.get("uxp", {}).get("version", "2.2.1-up.1")
     vpa = params.get("providerVerticalPodAutoscaling")
@@ -312,7 +313,7 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     # and AWS MRs all carry spec.forProvider) inherits mgmt_policies, so
     # Provision/ObserveOnly never delete the provisioned control plane on
     # teardown. Resources with an explicit policy (backup bucket, k8gb CoreDNS
-    # observe, knative serving) and composed XRs / Usage guards (no forProvider)
+    # observe, knative operator) and composed XRs / Usage guards (no forProvider)
     # are left untouched.
     for _name in list(rsp.desired.resources.keys()):
         _res = resource.struct_to_dict(rsp.desired.resources[_name].resource)

@@ -110,6 +110,21 @@ spec:
 > do not pay for an idle cloud load balancer. The community `ingress-nginx` this
 > replaced was retired 2026-03-24.
 
+### Upgrading to v0.3.0
+
+`spec.parameters.managementPolicies` is removed in favour of `managementMode`.
+Set `managementMode` before upgrading, or the XR falls back to `Full`, which now
+applies to every composed resource, Helm Releases included (v0.2.0 forwarded
+`managementPolicies` to the Network and EKS XRs only):
+
+| v0.2.0 `managementPolicies` | v0.3.0 `managementMode` |
+|---|---|
+| `["*"]` (default) | `Full` (default) |
+| `["Observe"]` | `ObserveOnly` |
+| `["Observe", "Create", "Update", "LateInitialize"]` | `Provision` |
+
+Other combinations have no equivalent.
+
 ### k8gb (global failover)
 
 When `k8gb.enabled: "yes"`, the control plane becomes a **producer** in the fleet
