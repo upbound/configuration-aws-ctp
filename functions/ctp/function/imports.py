@@ -22,6 +22,7 @@ every entry is checked against this XR's upbound.io/ctp-id and against the set o
 logical names this configuration can emit. Ambiguity is refused, never guessed.
 """
 
+import re
 import zlib
 
 from crossplane.function import resource
@@ -50,6 +51,34 @@ _ROUTE_DESTINATION = "0.0.0.0/0"
 _ROUTE_TABLE_KEYS = frozenset({"rt"})
 
 _CTP_ID_TAG = "upbound.io/ctp-id"
+
+_EXTERNAL_NAME = "crossplane.io/external-name"
+
+# The logical names the tag sweep may supply, each with the (service, type) its
+# ARN must carry. The name check stops the tag value from picking any composed
+# resource (a Helm Release takes its external-name as the release name); the
+# type check stops a subnet ARN tagged "vpc" from becoming the VPC id.
+#
+# subnet-* and rt are absent on purpose: the sweep indexes deleted resources for
+# hours (9 tagged subnets for 6 live), so only the EC2 describes may supply them.
+# A phantom subnet cost more than a bad reconcile: the Cluster resolved
+# subnetIdRefs -> subnetIds against it once, and CreateCluster then failed with
+# InvalidSubnetID.NotFound forever (2026-09-09).
+_TAGGED_ARN_TYPES = {
+    "vpc": ("ec2", "vpc"),
+    "igw": ("ec2", "internet-gateway"),
+    "sg": ("ec2", "security-group"),
+    "lb-controller-pia": ("eks", "podidentityassociation"),
+    "ebsCSIDriverPodIdentityAssociation": ("eks", "podidentityassociation"),
+}
+# One EIP per public subnet, so matched by pattern.
+_K8GB_EIP = re.compile(r"k8gb-eip-\d+")
+
+# Resources composed here whose external-name the import path can inject.
+_LOCAL_IMPORT_KEYS = frozenset({
+    "lb-controller-pia", "oidc-provider", "backup-policy-attachment",
+    "lb-controller-attach",
+})
 
 
 def build_import_filters(id_val: str) -> dict:
@@ -110,6 +139,22 @@ def arn_identifier(arn: str) -> str:
     return tail.rsplit(":", 1)[-1]
 
 
+def _arn_type(arn: str) -> tuple:
+    """(service, resource type) of arn:<partition>:<service>:<region>:<acct>:<type>/<id>."""
+    parts = arn.split(":", 5)
+    if len(parts) != 6 or "/" not in parts[5]:
+        return ("", "")
+    return (parts[2], parts[5].split("/", 1)[0])
+
+
+def _tag_sweep_accepts(logical: str, arn: str) -> bool:
+    """True when the sweep may supply `logical` and `arn` is the type it names."""
+    want = _TAGGED_ARN_TYPES.get(logical)
+    if want is None and _K8GB_EIP.fullmatch(logical):
+        want = ("ec2", "elastic-ip")
+    return want is not None and _arn_type(arn) == want
+
+
 def _pia_cluster(arn: str) -> str:
     """The cluster segment of an EKS Pod Identity Association ARN.
 
@@ -149,7 +194,8 @@ def _by_resource_tag(tagged: list, ctp_id: str, cluster_name: str = "") -> dict:
     EC2 describes, GetResources has no empty-filter guard, so an unresolvable
     filtersRef reads the whole region and this is the only boundary left - and
     one foreign control plane then makes its VPC the sole, unambiguous candidate
-    for "vpc".
+    for "vpc". Names and ARN types are checked against _TAGGED_ARN_TYPES for the
+    same reason _live_by_resource_tag checks `allowed`.
     """
     out = {}
     if not ctp_id:
@@ -160,6 +206,8 @@ def _by_resource_tag(tagged: list, ctp_id: str, cluster_name: str = "") -> dict:
             continue
         logical = tags.get("upbound.io/ctp-resource")
         arn = entry.get("arn", "")
+        if not logical or not _tag_sweep_accepts(logical, arn):
+            continue
         identifier = arn_identifier(arn)
         # The ARN says which cluster an association belongs to, so one from
         # another cluster is wrong whether or not it still exists. It also
@@ -170,7 +218,7 @@ def _by_resource_tag(tagged: list, ctp_id: str, cluster_name: str = "") -> dict:
         pia_cluster = _pia_cluster(arn)
         if cluster_name and pia_cluster and pia_cluster != cluster_name:
             continue
-        if logical and identifier:
+        if identifier:
             out.setdefault(logical, []).append(identifier)
     return out
 
@@ -252,6 +300,30 @@ def _association_external_names(route_tables: list, subnets: dict,
     return {k: v[0] for k, v in out.items() if len(v) == 1}
 
 
+def _live_vpc_and_igw(import_ctx: dict, ctp_id: str) -> dict:
+    """VPC and IGW ids the live EC2 describes vouch for.
+
+    Neither type has a describe of its own in function-aws-query v0.2.0, but every
+    subnet and route table carries vpcId and every route its gatewayId. Used only
+    to NARROW sweep candidates, never as a source. Empty when nothing live is
+    found, which leaves the sweep result as it was.
+    """
+    vpcs, igws = set(), set()
+    route_tables = import_ctx.get("routeTables") or []
+    for entry in (import_ctx.get("subnets") or []) + route_tables:
+        if (entry.get("tags") or {}).get(_CTP_ID_TAG) == ctp_id and entry.get("vpcId"):
+            vpcs.add(entry["vpcId"])
+    for rt in route_tables:
+        if (rt.get("tags") or {}).get(_CTP_ID_TAG) != ctp_id:
+            continue
+        for route in rt.get("routes") or []:
+            gw = route.get("gatewayId") or ""
+            if (route.get("destinationCidrBlock") == _ROUTE_DESTINATION
+                    and route.get("state") == "active" and gw.startswith("igw-")):
+                igws.add(gw)
+    return {"vpc": vpcs, "igw": igws}
+
+
 def build_external_names(import_ctx: dict, id_val: str, cluster_name: str,
                          account_id: str, oidc_host: str,
                          subnets: list = None) -> dict:
@@ -268,23 +340,19 @@ def build_external_names(import_ctx: dict, id_val: str, cluster_name: str,
 
     # Unambiguous tag hits only. A dead identifier is the duplicate import
     # exists to prevent, plus a confusing error, so ambiguity injects nothing.
+    # VPC and IGW phantoms are dropped first when the live describes vouch for
+    # something, so a deleted VPC neither shadows the live one nor stands in
+    # for it.
     names = {}
+    vouched = _live_vpc_and_igw(import_ctx, id_val)
     for logical, candidates in _by_resource_tag(
             import_ctx.get("tagged"), id_val, cluster_name).items():
+        if vouched.get(logical):
+            candidates = [c for c in candidates if c in vouched[logical]]
         if len(candidates) == 1:
             names[logical] = candidates[0]
 
-    # Never a fallback where an EC2 describe is authoritative: the sweep indexes
-    # deleted resources for hours (9 tagged subnets for 6 live), so where the
-    # describe is silent the answer is "does not exist". Dropping these keys
-    # before the overlay is what enforces that. A phantom subnet cost more than
-    # a bad reconcile: the Cluster resolved subnetIdRefs -> subnetIds against it,
-    # Crossplane resolves references once, and CreateCluster then failed with
-    # InvalidSubnetID.NotFound forever (2026-09-09).
-    for key in [k for k in names if k.startswith("subnet-")] + ["rt"]:
-        names.pop(key, None)
-
-    # Live overlay, and now the ONLY source for the types it covers. It also
+    # Live overlay, and the ONLY source for the types it covers. It also
     # supplies the associations nothing indexes. The route table matters twice
     # over, because `route` is derived from whatever `rt` ends up being.
     live_subnets = _live_by_resource_tag(
@@ -325,6 +393,9 @@ def build_external_names(import_ctx: dict, id_val: str, cluster_name: str,
     if account_id:
         names["backup-policy-attachment"] = (
             f"{id_val}-backup-irsa/arn:aws:iam::{account_id}:policy/{id_val}-backup-s3"
+        )
+        names["lb-controller-attach"] = (
+            f"{id_val}-lb-controller/arn:aws:iam::{account_id}:policy/{id_val}-lb-controller"
         )
 
     # Pod Identity associations arrive through the tag sweep, via the
@@ -384,21 +455,49 @@ def eks_external_names(external_names: dict) -> dict:
     }
 
 
-def apply_external_names(rsp, external_names: dict) -> None:
+def carried_external_names(observed_xr: dict, import_ctx: dict) -> dict:
+    """The externalNames map a sub-XR received last time, when nothing is discovered.
+
+    externalNames is a granular map, so a key this reconcile omits is deleted
+    from the sub-XR and upstream stops stamping it, which strips the annotation
+    as described in apply_external_names. Carried only without an import
+    context (the default Composition): the value is what was forwarded, not what
+    the MR carries now, so while discovery runs it stays authoritative -
+    otherwise a forwarded phantom the provider has since replaced is re-stamped
+    for good. Discovery misses are for upstream to cover, by preferring the
+    observed annotation over externalNames.
+    """
+    if import_ctx:
+        return {}
+    return (((observed_xr or {}).get("spec") or {}).get("parameters") or {}).get(
+        "externalNames") or {}
+
+
+def apply_external_names(rsp, external_names: dict, observed: dict) -> None:
     """Stamp crossplane.io/external-name on matching desired resources.
 
-    An annotation already present wins: backup.py sets the Bucket's from the
-    location ARN and must not be second-guessed.
+    Precedence: an annotation the desired resource already carries (backup.py
+    sets the Bucket's from the location ARN), then the observed one, then the
+    discovered one. Observed is carried forward because Crossplane applies
+    composed resources with SSA and upjet writes the annotation back only when it
+    changes, so once injected this function is its sole owner and any reconcile
+    that omits it deletes it - a discovery miss, or a switch back to the default
+    Composition. Limited to importable names, the only ones this function can
+    end up owning, and it runs on both Compositions.
     """
-    if not external_names:
-        return
     for name in list(rsp.desired.resources.keys()):
         res = resource.struct_to_dict(rsp.desired.resources[name].resource)
         ann = res.get("metadata", {}).get("annotations", {}) or {}
+        if ann.get(_EXTERNAL_NAME):
+            continue
         logical = ann.get("crossplane.io/composition-resource-name", name)
         target = external_names.get(logical)
-        if not target or ann.get("crossplane.io/external-name"):
+        if logical in _LOCAL_IMPORT_KEYS or _K8GB_EIP.fullmatch(logical):
+            observed_ann = (((observed or {}).get(name) or {}).get("metadata") or {}).get(
+                "annotations") or {}
+            target = observed_ann.get(_EXTERNAL_NAME) or target
+        if not target:
             continue
         res.setdefault("metadata", {}).setdefault("annotations", {})[
-            "crossplane.io/external-name"] = target
+            _EXTERNAL_NAME] = target
         resource.update(rsp.desired.resources[name], res)

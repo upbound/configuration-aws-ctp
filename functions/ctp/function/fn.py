@@ -39,6 +39,7 @@ from .imports import (
     apply_external_names,
     build_import_filters,
     build_external_names,
+    carried_external_names,
     eks_external_names,
     network_external_names,
 )
@@ -227,7 +228,7 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     # association with no external-name. That 409s on the live one and upjet
     # never re-Observes, so the association is wedged for good (measured
     # 2026-09-09). Deterministic naming makes the name derivable up front, and
-    # import already requires it.
+    # import requires it (prepare_import_filters).
     import_cluster_name = cluster_name or (
         "{}-eks".format(id_val) if naming == "Deterministic" else "")
     external_names = build_external_names(
@@ -238,11 +239,17 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     add_network_resource(rsp, id_val, region, provider_config, mgmt_policies,
                          network_param, config,
                          external_names=network_external_names(
-                             external_names, network_subnets))
+                             {**carried_external_names(
+                                 observed_resources.get("network"), import_ctx),
+                              **external_names},
+                             network_subnets))
     add_eks_resource(rsp, id_val, region, provider_config, version, nodes,
                      access_config, mgmt_policies, iam_param, config,
                      naming=naming,
-                     external_names=eks_external_names(external_names))
+                     external_names=eks_external_names(
+                         {**carried_external_names(
+                             observed_resources.get("eks-cluster"), import_ctx),
+                          **external_names}))
     add_uxp_release(rsp, id_val, uxp_version, uxp_deployed, mgr_args, config)
     add_usage_resources(rsp, id_val, config, k8gb_enabled=k8gb_enabled,
                         argocd_enabled=argocd_enabled,
@@ -316,7 +323,7 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
         resource.update(rsp.desired.resources[_name], _res)
 
     # --- Import: inject the external-names discovered above ---
-    apply_external_names(rsp, external_names)
+    apply_external_names(rsp, external_names, observed_resources)
 
     update_status(rsp, id_val, params, uxp_version, uxp_deployed, backup,
                   role_arn, bucket_name, observed_resources, nodes,
@@ -341,7 +348,14 @@ def prepare_import_filters(req: fnv1.RunFunctionRequest,
     function-aws-query sets only the leaf of its target path.
     """
     xr = resource.struct_to_dict(req.observed.composite.resource)
-    id_val = xr.get("spec", {}).get("parameters", {}).get("id", "")
+    params = xr.get("spec", {}).get("parameters", {})
+    # Under Generated the EKS cluster, node group and IAM roles get random names,
+    # so every bootstrap creates a second EKS stack beside the imported network.
+    if params.get("naming", "Generated") != "Deterministic":
+        response.fatal(
+            rsp, "import requires spec.parameters.naming: Deterministic")
+        return
+    id_val = params.get("id", "")
     filters = build_import_filters(id_val)
     if not filters:
         # Unreachable via the XRD (minLength 1 on id). Fatal rather than silent:

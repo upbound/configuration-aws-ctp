@@ -50,7 +50,8 @@ bootstrap cluster holds no way to find the resources it created last time.
 The import path closes this by tagging every owned resource and querying those
 tags to inject `crossplane.io/external-name` before Crossplane reconciles (see
 "Import on AWS" in the top-level README). Selecting the Composition is the
-whole opt-in - the filters are derived from `id`:
+opt-in, with `naming: Deterministic` (the Composition fails without it) - the
+filters are derived from `id`:
 
 ```yaml
 spec:
@@ -59,6 +60,7 @@ spec:
       name: controlplane-import.aws.platform.upbound.io
   parameters:
     id: <id>
+    naming: Deterministic
 ```
 
 It also needs an `aws-creds` Secret in `default`, which both provision suites

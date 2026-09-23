@@ -229,7 +229,7 @@ per-reconcile scratch space; nothing is persisted.
 
 Everything comes from `spec.parameters.id`: the `upbound.io/ctp-id` tag, both
 filter shapes, the identity re-check, and the `oidc-provider` /
-`backup-policy-attachment` names.
+`backup-policy-attachment` / `lb-controller-attach` names.
 
 Nothing the queries return is trusted. Every entry is re-checked before use:
 
@@ -251,9 +251,12 @@ spec:
   parameters:
     id: awsctpcp1
     managementMode: Provision
+    naming: Deterministic
 ```
 
-Selecting the Composition is the whole opt-in. It also needs an `aws-creds`
+Selecting the Composition is the opt-in; `naming: Deterministic` is required,
+and the Composition fails under `Generated`, which would re-create the EKS layer
+on every bootstrap. It also needs an `aws-creds`
 Secret in `default` - the query steps read credentials from a static block in
 the Composition, which is why import is a separate Composition rather than a flag.
 
