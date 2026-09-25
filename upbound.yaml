@@ -3,11 +3,15 @@ kind: Project
 metadata:
   name: configuration-aws-ctp
 spec:
+  apiDependencies:
+  - http:
+      url: https://raw.githubusercontent.com/crossplane/crossplane/refs/tags/v2.1.4/cluster/crds/apiextensions.crossplane.io_managedresourceactivationpolicies.yaml
+    type: crd
   dependsOn:
   - apiVersion: pkg.crossplane.io/v1
     kind: Configuration
     package: xpkg.upbound.io/upbound/configuration-aws-eks
-    version: v2.0.2
+    version: v2.2.1
   - apiVersion: pkg.crossplane.io/v1
     kind: Function
     package: xpkg.upbound.io/crossplane-contrib/function-extra-resources
@@ -16,6 +20,10 @@ spec:
     kind: Function
     package: xpkg.upbound.io/crossplane-contrib/function-auto-ready
     version: v0.6.4
+  - apiVersion: pkg.crossplane.io/v1
+    kind: Function
+    package: xpkg.upbound.io/upbound/function-aws-query
+    version: v0.2.0
   - apiVersion: pkg.crossplane.io/v1
     kind: Provider
     package: xpkg.upbound.io/upbound/provider-aws-s3

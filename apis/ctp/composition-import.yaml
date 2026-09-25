@@ -1,0 +1,143 @@
+# Import variant of the ControlPlane Composition, for the dynamic-provisioning
+# pipeline. Identical to controlplane.aws.platform.upbound.io except for the
+# discovery steps ahead of ctp: one derives the filters, three query AWS.
+#
+# Takes no extra XR configuration - opt in with
+# spec.crossplane.compositionRef.name and everything else comes from `id`.
+#
+# Why a separate Composition and not a flag on the default one: function-aws-query
+# reads its credentials from the pipeline step's `credentials` block, which is
+# static in the Composition, and it fails the whole composition when that block is
+# missing. Consumers who have no aws-creds Secret must keep working, so the query
+# steps live here and control planes opt in with
+# spec.crossplane.compositionRef.name: controlplane-import.aws.platform.upbound.io.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  labels:
+    provider: aws
+    variant: import
+  name: controlplane-import.aws.platform.upbound.io
+spec:
+  compositeTypeRef:
+    apiVersion: aws.platform.upbound.io/v1alpha1
+    kind: ControlPlane
+  mode: Pipeline
+  pipeline:
+  - functionRef:
+      name: crossplane-contrib-function-extra-resources
+    step: fetch-control-planes
+    input:
+      apiVersion: extra-resources.fn.crossplane.io/v1beta1
+      kind: Input
+      spec:
+        extraResources:
+        - apiVersion: aws.platform.upbound.io/v1alpha1
+          kind: ControlPlane
+          into: allControlPlanes
+          type: Selector
+          selector:
+            maxMatch: 100
+            minMatch: 0
+
+  # Derives the queries' filters from spec.parameters.id, so no filter is
+  # operator-supplied: a filter that does not scope to this control plane is the
+  # one input that could make discovery return another one's resources. The two
+  # APIs need different shapes for it - see build_import_filters in imports.py.
+  #
+  # The ctp function in a mode its `input` selects; emits no resources. Separate
+  # step because filtersRef is resolved when the query step runs.
+  - functionRef:
+      name: upbound-configuration-aws-ctpctp
+    step: prepare-import-filters
+    input:
+      apiVersion: ctp.fn.crossplane.io/v1alpha1
+      kind: ImportFilters
+
+  # Everything taggable, in one server-side tag-filtered call. Returns
+  # [{arn, tags}]; the AWS identifier is the last segment of the ARN. Covers VPC,
+  # subnets, internet gateway, route table, security group and the k8gb EIPs.
+  - functionRef:
+      name: upbound-function-aws-query
+    step: discover-tagged
+    input:
+      apiVersion: aws.fn.crossplane.io/v1beta1
+      kind: Input
+      queryType: GetResources
+      regionRef: spec.parameters.region
+      filtersRef: context.import.filters.tagged
+      parameters:
+        resourceTypeFilters: "ec2:vpc,ec2:subnet,ec2:internet-gateway,ec2:route-table,ec2:security-group,ec2:elastic-ip,eks:podidentityassociation"
+      target: context.import.tagged
+    credentials:
+    - name: aws-creds
+      source: Secret
+      secretRef:
+        namespace: default
+        name: aws-creds
+
+  # Authoritative, live-only reads for the two things the tag sweep above cannot
+  # resolve. Unlike the Tagging API an EC2 describe never returns a deleted
+  # resource, and DescribeRouteTables carries each route table's associations,
+  # which no tag-based or Cloud Control query exposes at all.
+  #
+  # Both scoped by context.import.filters.ec2. These two refuse an empty filter
+  # set rather than reading the region; GetResources above does not, which is why
+  # build_external_names re-checks the identity tag on every entry regardless.
+  - functionRef:
+      name: upbound-function-aws-query
+    step: discover-subnets
+    input:
+      apiVersion: aws.fn.crossplane.io/v1beta1
+      kind: Input
+      queryType: DescribeSubnets
+      regionRef: spec.parameters.region
+      filtersRef: context.import.filters.ec2
+      target: context.import.subnets
+    credentials:
+    - name: aws-creds
+      source: Secret
+      secretRef:
+        namespace: default
+        name: aws-creds
+
+  # The target here is really the associations, which build_external_names
+  # matches to their subnets. No data dependency on discover-subnets.
+  - functionRef:
+      name: upbound-function-aws-query
+    step: discover-route-tables
+    input:
+      apiVersion: aws.fn.crossplane.io/v1beta1
+      kind: Input
+      queryType: DescribeRouteTables
+      regionRef: spec.parameters.region
+      filtersRef: context.import.filters.ec2
+      target: context.import.routeTables
+    credentials:
+    - name: aws-creds
+      source: Secret
+      secretRef:
+        namespace: default
+        name: aws-creds
+
+  # The two database SecurityGroupRules are NOT discovered: their external-name
+  # is Terraform's sgrule-<crc32>, which no API returns, so imports.py derives it.
+  # DescribeSecurityGroupRules could supply the signature the hash is built from
+  # (replacing the mirrored constants) but scopes only by group-id, which is
+  # itself discovered above - so it cannot be a static filter here.
+
+  # discover-assoc REMOVED, closed by discover-route-tables above.
+  # AWS::EC2::SubnetRouteTableAssociation cannot be listed safely in a shared
+  # account: ListResources enumerates every association and hydration
+  # GetResources each one, so one foreign or main association aborts the whole
+  # composition. hydrate=false returns identifiers with no SubnetId to map them
+  # by. The lesson generalises to any hydrated ListResources in a shared
+  # account.
+
+  - functionRef:
+      name: upbound-configuration-aws-ctpctp
+    step: ctp
+
+  - functionRef:
+      name: crossplane-contrib-function-auto-ready
+    step: auto-ready
