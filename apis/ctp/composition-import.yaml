@@ -24,22 +24,6 @@ spec:
     kind: ControlPlane
   mode: Pipeline
   pipeline:
-  - functionRef:
-      name: crossplane-contrib-function-extra-resources
-    step: fetch-control-planes
-    input:
-      apiVersion: extra-resources.fn.crossplane.io/v1beta1
-      kind: Input
-      spec:
-        extraResources:
-        - apiVersion: aws.platform.upbound.io/v1alpha1
-          kind: ControlPlane
-          into: allControlPlanes
-          type: Selector
-          selector:
-            maxMatch: 100
-            minMatch: 0
-
   # Derives the queries' filters from spec.parameters.id, so no filter is
   # operator-supplied: a filter that does not scope to this control plane is the
   # one input that could make discovery return another one's resources. The two

@@ -30,8 +30,8 @@ spec:
   package: xpkg.upbound.io/upbound/configuration-aws-ctp:v0.1.0
 ```
 
-This configuration depends on `configuration-aws-eks`, `function-extra-resources`,
-`function-auto-ready`, and `provider-aws-s3` (see [`upbound.yaml`](upbound.yaml)).
+This configuration depends on `configuration-aws-eks`, `function-auto-ready`, and
+`provider-aws-s3` (see [`upbound.yaml`](upbound.yaml)).
 
 ### The ControlPlane is namespaced
 
@@ -176,9 +176,10 @@ kubectl create secret generic uxp-license-<controlplane-name> \
   -n crossplane-system
 ```
 
-`ControlPlane`s that share a license Secret report a `LicenseConflict` condition and get no
-license. Do not run `up uxp license apply` on the management cluster: it also installs the
-license there as a `License` CR, re-using it across two UXP clusters.
+A `ControlPlane` whose license Secret an older `ControlPlane` already uses reports a
+`LicenseConflict` condition and gets no license. Do not run `up uxp license apply` on the
+management cluster: it also installs the license there as a `License` CR, re-using it across
+two UXP clusters.
 
 ## Testing
 

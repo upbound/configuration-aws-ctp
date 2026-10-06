@@ -228,14 +228,14 @@ def derive_k8gb_ext_geo_tags(id_val: str, dns_zone: str, my_tag: str,
     single-cluster start."""
     tags = set()
     for ctp in all_ctps:
-        c_name = ctp.get("metadata", {}).get("name", "")
-        if not c_name or c_name == id_val:
-            continue
         c_params = ctp.get("spec", {}).get("parameters", {})
+        c_id = c_params.get("id", "")
+        if not c_id or c_id == id_val:
+            continue
         c_k8gb = c_params.get("k8gb", {}) or {}
         if c_k8gb.get("enabled") != "yes" or c_k8gb.get("dnsZone") != dns_zone:
             continue
-        c_tag = derive_k8gb_geo_tag(c_k8gb, c_params.get("region", ""), c_name)
+        c_tag = derive_k8gb_geo_tag(c_k8gb, c_params.get("region", ""), c_id)
         if c_tag and c_tag != my_tag:
             tags.add(c_tag)
     return ",".join(sorted(tags))
