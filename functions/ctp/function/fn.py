@@ -151,7 +151,7 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     extra_ctx = context_dict.get("apiextensions.crossplane.io/extra-resources", {})
     all_ctps = extra_ctx.get("allControlPlanes", [])
 
-    license_conflict = check_license_conflict(id_val, license_param, all_ctps)
+    license_conflict = check_license_conflict(xr, license_param, all_ctps)
 
     # k8gb geo tags: this cluster's unique tag, plus same-cloud k8gb peers on
     # the same dnsZone (cross-cloud peers are injected later by FleetGslb).
