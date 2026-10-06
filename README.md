@@ -165,8 +165,20 @@ control plane `region`; only the S3 bucket and the UXP `BackupConfig`/`Restore` 
 use `bucketRegion`.
 
 UXP enterprise features (`license`, `knative`, `providerVerticalPodAutoscaling`) require a UXP
-license Secret on the management cluster — see the header of `with-backup.yaml` for how to
-create it (`up uxp license apply <license.json>`).
+license Secret on the management cluster. Licenses may not be re-used across UXP clusters
+([license management docs](https://docs.upbound.io/manuals/uxp/howtos/license-management/#kubectl))
+and every `ControlPlane` is its own UXP cluster, so give each one its own Secret holding a
+distinct license:
+
+```bash
+kubectl create secret generic uxp-license-<controlplane-name> \
+  --from-file=license.json=./license-<controlplane-name>.json \
+  -n crossplane-system
+```
+
+`ControlPlane`s that share a license Secret report a `LicenseConflict` condition and get no
+license. Do not run `up uxp license apply` on the management cluster: it also installs the
+license there as a `License` CR, re-using it across two UXP clusters.
 
 ## Testing
 
