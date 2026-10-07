@@ -42,11 +42,12 @@ def stamp(resource_dict: dict, config: Dict, aws_tags: bool = False,
 
 def check_license_conflict(xr: Dict, license_param: Optional[Dict],
                            all_ctps: List[Dict]) -> str:
-    """Return namespace/name of an older ControlPlane that claims the same
-    license secret (namespace/name pair), or "" if there is no conflict. Only
-    the oldest claimant may install it; compose keeps a license an XR already
-    has installed, so the guard never strips a live one. A ControlPlane being
-    deleted releases its claim."""
+    """Return namespace/name of the oldest other ControlPlane that claims the
+    same license secret (namespace/name pair), or "" if there is no conflict.
+    Only the oldest claimant may install it; compose keeps a license an XR
+    already has installed, so the guard never strips a live one. A terminating
+    ControlPlane holds no claim, so a replacement need not wait out its
+    teardown."""
     if not license_param or not all_ctps:
         return ""
 
@@ -64,16 +65,16 @@ def check_license_conflict(xr: Dict, license_param: Optional[Dict],
         return (ts == "", ts, identity(obj))
 
     my_key = secret_key(license_param)
+    older = []
     for ctp in all_ctps:
-        if ctp.get("metadata", {}).get("deletionTimestamp"):
+        if identity(ctp) == identity(xr) or ctp.get("metadata", {}).get("deletionTimestamp"):
             continue
         c_license = ctp.get("spec", {}).get("parameters", {}).get("license") or {}
         if (c_license.get("secretRef", {}).get("name")
                 and secret_key(c_license) == my_key
-                # Strict: the XR's own allControlPlanes entry never conflicts.
                 and claim_order(ctp) < claim_order(xr)):
-            return "/".join(identity(ctp))
-    return ""
+            older.append(ctp)
+    return "/".join(identity(min(older, key=claim_order))) if older else ""
 
 
 def extract_oidc_info(backup: Dict, observed: Dict) -> tuple:
