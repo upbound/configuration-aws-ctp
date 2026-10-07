@@ -341,7 +341,8 @@ is no licensing consideration.
 - Input: main-zone provider + zone id/name (where DNS "sits"), and a
   selector/member list of participating `ControlPlane`s (one selector per cloud
   kind, or a shared `fleet.upbound.io/set` label).
-- Reads all `ControlPlane` statuses via `function-extra-resources`, assembles
+- Reads all `ControlPlane` statuses via `function-extra-resources` (its `Selector`
+  needs `matchLabels`, e.g. `fleet.upbound.io/set`; a label-less one fetches nothing), assembles
   NS+glue, and writes them as **provider DNS `Record` MRs** for the main zone's
   cloud (parent already holds those creds). **The NS record names must match the
   `ClusterNSName`/`ExtClusterNSNames` convention each k8gb expects for its

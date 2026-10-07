@@ -166,7 +166,7 @@ use `bucketRegion`.
 
 UXP enterprise features (`license`, `knative`, `providerVerticalPodAutoscaling`) require a UXP
 license Secret on the management cluster. Licenses may not be re-used across UXP clusters
-([license management docs](https://docs.upbound.io/manuals/uxp/howtos/license-management/#kubectl))
+([license management docs](https://docs.upbound.io/manuals/uxp/howtos/license-management/#add-a-license))
 and every `ControlPlane` is its own UXP cluster, so give each one its own Secret holding a
 distinct license:
 
@@ -177,9 +177,10 @@ kubectl create secret generic uxp-license-<controlplane-name> \
 ```
 
 A `ControlPlane` whose license Secret an older `ControlPlane` already uses reports a
-`LicenseConflict` condition and gets no license. Do not run `up uxp license apply` on the
-management cluster: it also installs the license there as a `License` CR, re-using it across
-two UXP clusters.
+`LicenseConflict` condition and gets no license. A license it already has installed is kept,
+from the Secret it was installed from, until the conflict is resolved. Do not run
+`up uxp license apply` on the management cluster: it also installs the license there as a
+`License` CR, re-using it across two UXP clusters.
 
 ## Testing
 
