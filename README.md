@@ -178,9 +178,27 @@ kubectl create secret generic uxp-license-<controlplane-name> \
 
 A `ControlPlane` whose license Secret an older `ControlPlane` already uses reports a
 `LicenseConflict` condition and gets no license. A license it already has installed is kept,
-from the Secret it was installed from, until the conflict is resolved. Do not run
-`up uxp license apply` on the management cluster: it also installs the license there as a
-`License` CR, re-using it across two UXP clusters.
+from the Secret it was installed from, until the conflict is resolved.
+
+- The condition is in `status.controlplane.conditions`, not `status.conditions`. Its
+  message names the oldest other `ControlPlane` on the Secret as `namespace/name`.
+- "Older" means `metadata.creationTimestamp`, with `namespace/name` breaking ties. A
+  `ControlPlane` being deleted holds no claim. Restoring or re-applying XRs resets
+  `creationTimestamp` and can change the order, but never removes an installed license.
+- To resolve it, point the newer `ControlPlane` at its own Secret.
+- Only references to the same Secret are detected: two Secrets holding the same license
+  JSON are not, and neither are Azure or GCP `ControlPlane`s on the same management
+  cluster, since only `aws.platform.upbound.io` `ControlPlane`s are compared.
+- `ControlPlane`s are compared across all namespaces, so the message can name one in
+  another namespace, and k8gb peers on the same `dnsZone` get each other's geo tags
+  across namespaces. This assumes a single-tenant management cluster.
+
+**Upgrading with `ControlPlane`s that share a Secret:** earlier releases never ran this
+check. After the upgrade every sharer but the oldest reports `LicenseConflict` and keeps
+its installed license; give each its own Secret and license to clear it.
+
+Do not run `up uxp license apply` on the management cluster: it also installs the license
+there as a `License` CR, re-using it across two UXP clusters.
 
 ## Testing
 
