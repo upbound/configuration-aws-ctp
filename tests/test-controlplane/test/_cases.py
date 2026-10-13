@@ -626,7 +626,7 @@ CASES = [
                                                                                'reason': 'DuplicateSecret',
                                                                                'message': "License secret is already claimed by ControlPlane 'platform/newer-cp'. Each ControlPlane must use a unique license secret."}]}}}]}},
     # Same-second race: the holder keeps the license and reports no conflict, although a
-    # later-installed peer with the same creationTimestamp sorts before it by name.
+    # peer created in the same second, with nothing installed, sorts before it by name.
     {'name': 'license-shared-secret-holder-wins-tie',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',

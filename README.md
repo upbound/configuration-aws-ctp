@@ -183,8 +183,9 @@ from the Secret it was installed from, until the conflict is resolved.
 - The condition is in `status.controlplane.conditions`, not `status.conditions`. Its
   message names the owner as `namespace/name`.
 - The owner is the `ControlPlane` holding the license, recorded in
-  `status.controlplane.license`. With no holder, the oldest by `metadata.creationTimestamp`
-  owns it, with `namespace/name` breaking ties. A `ControlPlane` being deleted holds no claim.
+  `status.controlplane.license`. Among several holders, or with none, the oldest by
+  `metadata.creationTimestamp` owns it, with `namespace/name` breaking ties. A `ControlPlane`
+  being deleted holds no claim.
 - Two `ControlPlane`s reconciled at the same moment can both install the license before
   either records its claim. The one that does not own the Secret then reports
   `LicenseConflict` and keeps its license.

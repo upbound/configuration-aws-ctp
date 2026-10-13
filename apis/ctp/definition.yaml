@@ -384,8 +384,10 @@ spec:
                         properties:
                           name:
                             type: string
+                            description: Name of the Secret holding the installed license JSON.
                           namespace:
                             type: string
+                            description: Namespace of the Secret.
                   resources:
                     description: Managed resource health summary across all composed resources.
                     type: object
