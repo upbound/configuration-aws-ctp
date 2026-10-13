@@ -176,16 +176,19 @@ kubectl create secret generic uxp-license-<controlplane-name> \
   -n crossplane-system
 ```
 
-A `ControlPlane` whose license Secret an older `ControlPlane` already uses reports a
+A `ControlPlane` whose license Secret another `ControlPlane` owns reports a
 `LicenseConflict` condition and gets no license. A license it already has installed is kept,
 from the Secret it was installed from, until the conflict is resolved.
 
 - The condition is in `status.controlplane.conditions`, not `status.conditions`. Its
-  message names the oldest other `ControlPlane` on the Secret as `namespace/name`.
-- "Older" means `metadata.creationTimestamp`, with `namespace/name` breaking ties. A
-  `ControlPlane` being deleted holds no claim. Restoring or re-applying XRs resets
-  `creationTimestamp` and can change the order, but never removes an installed license.
-- To resolve it, point the newer `ControlPlane` at its own Secret.
+  message names the owner as `namespace/name`.
+- The owner is the `ControlPlane` holding the license, recorded in
+  `status.controlplane.license`. With no holder, the oldest by `metadata.creationTimestamp`
+  owns it, with `namespace/name` breaking ties. A `ControlPlane` being deleted holds no claim.
+- Two `ControlPlane`s reconciled at the same moment can both install the license before
+  either records its claim. The one that does not own the Secret then reports
+  `LicenseConflict` and keeps its license.
+- To resolve it, point the `ControlPlane` reporting the conflict at its own Secret.
 - Only references to the same Secret are detected: two Secrets holding the same license
   JSON are not, and neither are Azure or GCP `ControlPlane`s on the same management
   cluster, since only `aws.platform.upbound.io` `ControlPlane`s are compared.

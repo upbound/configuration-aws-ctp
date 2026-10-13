@@ -372,6 +372,20 @@ spec:
                       lastBackupTime:
                         description: Timestamp of the most recent scheduled backup run, sourced from BackupSchedule status.
                         type: string
+                  license:
+                    description: >-
+                      The license this ControlPlane installs. ControlPlanes sharing its Secret treat it
+                      as the holder - see the LicenseConflict condition.
+                    type: object
+                    properties:
+                      secretRef:
+                        description: The Secret the installed license is copied from.
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                          namespace:
+                            type: string
                   resources:
                     description: Managed resource health summary across all composed resources.
                     type: object
