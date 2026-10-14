@@ -17,8 +17,8 @@ spec:
       schedule: "*/15 * * * *"
     license:
       secretRef:
-        name: uxp-license
-        namespace: default
+        name: uxp-license-uxp-ctp-1
+        namespace: crossplane-system
     knative:
       enabled: "yes"
     providerVerticalPodAutoscaling:

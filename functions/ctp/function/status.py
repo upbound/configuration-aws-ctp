@@ -12,7 +12,7 @@ from .prelude import extract_coredns_endpoint
 def update_status(rsp, id_val, params, uxp_version, uxp_deployed, backup,
                  role_arn, bucket_name, observed, nodes, ng_actual_type,
                  ng_type_mismatch, vpa, knative, k8gb, k8gb_geo_tag, eip_ips,
-                 eip_count, license_conflict, config):
+                 eip_count, license_conflict, license_claim, config):
     # rsp.desired.composite.resource is a google.protobuf.Struct — convert
     # so we can read fields out of the partially-built XR.
     xr_dict = resource.struct_to_dict(rsp.desired.composite.resource)
@@ -90,6 +90,12 @@ def update_status(rsp, id_val, params, uxp_version, uxp_deployed, backup,
     }
     if ng_actual_type:
         status["controlplane"]["nodes"]["currentInstanceType"] = ng_actual_type
+
+    # Read by check_license_conflict on peers sharing the Secret.
+    if license_claim:
+        ref = license_claim.get("secretRef", {})
+        status["controlplane"]["license"] = {"secretRef": {
+            "name": ref.get("name", ""), "namespace": ref.get("namespace", "default")}}
 
     if vpa:
         status["controlplane"]["providerVerticalPodAutoscaling"] = {
