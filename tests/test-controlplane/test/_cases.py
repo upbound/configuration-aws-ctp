@@ -1212,8 +1212,10 @@ CASES = [
                                   {'apiVersion': 'helm.m.crossplane.io/v1beta1',
                                    'kind': 'Release',
                                    'metadata': {'name': 'test-cp-lb-controller'},
+                                   # Chart 1.17.1 = controller v2.17.1; TCP_UDP listeners need >= v2.13.
                                    'spec': {'forProvider': {'chart': {'name': 'aws-load-balancer-controller',
-                                                                      'repository': 'https://aws.github.io/eks-charts'},
+                                                                      'repository': 'https://aws.github.io/eks-charts',
+                                                                      'version': '1.17.1'},
                                                             'namespace': 'kube-system',
                                                             'values': {'clusterName': 'test-cp-abc12345',
                                                                        'vpcId': 'vpc-0abc123',
@@ -1274,7 +1276,11 @@ CASES = [
                                                                                               'parentZone': 'example.com'}]},
                                                                        'extdns': {'enabled': False},
                                                                        'coredns': {'serviceType': 'LoadBalancer',
-                                                                                   'service': {'annotations': {'service.beta.kubernetes.io/aws-load-balancer-eip-allocations': 'eipalloc-000,eipalloc-001,eipalloc-002'}}}}}}},
+                                                                                   # TCP_UDP:53 on one listener and cross-zone, so TCP queries
+                                                                                   # and the EIP of an AZ without a node are answered.
+                                                                                   'service': {'annotations': {'service.beta.kubernetes.io/aws-load-balancer-eip-allocations': 'eipalloc-000,eipalloc-001,eipalloc-002',
+                                                                                                               'service.beta.kubernetes.io/aws-load-balancer-enable-tcp-udp-listener': 'true',
+                                                                                                               'service.beta.kubernetes.io/aws-load-balancer-attributes': 'load_balancing.cross_zone.enabled=true'}}}}}}},
                                   {'apiVersion': 'kubernetes.m.crossplane.io/v1alpha1',
                                    'kind': 'Object',
                                    'metadata': {'name': 'test-cp-k8gb-coredns'},
