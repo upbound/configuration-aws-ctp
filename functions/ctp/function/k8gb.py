@@ -74,11 +74,17 @@ def add_k8gb_resources(rsp, id_val, k8gb_param, geo_tag, ext_geo_tags,
             "service": {
                 "annotations": {
                     # AWS Load Balancer Controller-managed NLB (Step 3), not the
-                    # in-tree `nlb` value — the controller reliably serves UDP +
-                    # mixed-protocol TCP_UDP:53, which the in-tree path does not.
+                    # in-tree `nlb` value, which cannot serve UDP and TCP on one port.
                     "service.beta.kubernetes.io/aws-load-balancer-type": "external",
                     "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type": "instance",
-                    "service.beta.kubernetes.io/aws-load-balancer-scheme": "internet-facing"
+                    "service.beta.kubernetes.io/aws-load-balancer-scheme": "internet-facing",
+                    # The Service has UDP and TCP on port 53. Without this the
+                    # controller builds only one listener (UDP), so TCP:53 is
+                    # refused; with it, one TCP_UDP listener (controller >= v2.13).
+                    "service.beta.kubernetes.io/aws-load-balancer-enable-tcp-udp-listener": "true",
+                    # Instance targets exist only in AZs with nodes; without
+                    # cross-zone, the EIP of an AZ without a node answers nothing.
+                    "service.beta.kubernetes.io/aws-load-balancer-attributes": "load_balancing.cross_zone.enabled=true"
                 }
             }
         }
