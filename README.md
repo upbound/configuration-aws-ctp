@@ -90,7 +90,7 @@ spec:
 | `region` | yes | AWS region. |
 | `nodes` | yes | EKS node group config (`count`, `instanceType`, default `t3.small`). |
 | `network` | no | VPC topology (`vpcCidrBlock`, `subnets`). Defaults to a resilient three-AZ layout across `<region>a/b/c`. |
-| `version` | no | Kubernetes version (`1.31`–`1.35`, default `1.34`). |
+| `version` | no | Kubernetes version (`1.31`–`1.36`, default `1.34`). |
 | `providerConfigName` | no | ProviderConfig to use (default `default`). |
 | `accessConfig` | no | EKS authentication mode and cluster-creator admin bootstrap. |
 | `iam.principalArn` | no | Principal ARN to grant ClusterAdmin. |
