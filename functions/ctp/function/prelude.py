@@ -6,7 +6,15 @@ values consumed by every other section.
 """
 
 import re
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
+
+# How often the k8gb bootstrap nudge Service changes while k8gb's zone is
+# missing. Above the 60s negative-cache TTL of the *.elb.amazonaws.com zones,
+# so each retry misses a cached NXDOMAIN, and above the 60s function response
+# TTL that re-renders the XR, so no bucket is skipped. Each change costs one
+# Service patch and one k8gb bootstrap reconcile.
+_K8GB_NUDGE_INTERVAL_SECONDS = 120
 
 
 def stamp(resource_dict: dict, config: Dict, aws_tags: bool = False,
@@ -287,6 +295,42 @@ def extract_coredns_endpoint(observed: Dict) -> str:
         return ""
     first = ingress[0]
     return first.get("hostname") or first.get("ip") or ""
+
+
+def is_k8gb_zone_empty(observed: Dict) -> bool:
+    """True when the observe-only Object has read k8gb's zone ConfigMap and it
+    has no data yet, i.e. k8gb has not written its zone config. False until the
+    ConfigMap has been observed."""
+    obs = observed.get("k8gb-zone-delegation-observe")
+    if not obs:
+        return False
+    res = obs.resource if hasattr(obs, "resource") else obs
+    manifest = res.get("status", {}).get("atProvider", {}).get("manifest", {})
+    return bool(manifest) and not manifest.get("data")
+
+
+def has_observed_manifest(observed: Dict, name: str) -> bool:
+    """True when the observed provider-kubernetes Object has read its child
+    resource, i.e. status.atProvider.manifest is non-empty."""
+    obs = observed.get(name)
+    if not obs:
+        return False
+    res = obs.resource if hasattr(obs, "resource") else obs
+    return bool(res.get("status", {}).get("atProvider", {}).get("manifest"))
+
+
+def build_k8gb_nudge_annotations(nudging: bool, now: datetime) -> Dict[str, str]:
+    """Annotations of the k8gb bootstrap nudge Service (k8gb.py, #24). While
+    nudging, upbound.io/k8gb-bootstrap-nudge is the start of the
+    _K8GB_NUDGE_INTERVAL_SECONDS bucket holding `now` (aware UTC), so the
+    Service changes once per bucket; idle omits it."""
+    annotations = {"upbound.io/k8gb-bootstrap": "nudging" if nudging else "idle"}
+    if nudging:
+        start = (int(now.timestamp())
+                 // _K8GB_NUDGE_INTERVAL_SECONDS * _K8GB_NUDGE_INTERVAL_SECONDS)
+        annotations["upbound.io/k8gb-bootstrap-nudge"] = datetime.fromtimestamp(
+            start, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return annotations
 
 
 def public_subnet_count(network_param: Dict) -> int:

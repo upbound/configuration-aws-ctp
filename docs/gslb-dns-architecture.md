@@ -306,6 +306,10 @@ is no licensing consideration.
   parent-side `ControlPlane` XR. This
   reintroduced the observe-only `Object` pattern dropped in commit `dc8644d`; see
   the teardown note below.
+- **AWS only:** also observes `k8gb/k8gb-zone-delegation`. In `Full` and
+  `Provision` the XR stays non-Ready until k8gb has written it, and an inert
+  `default/k8gb-bootstrap-nudge` Service re-runs k8gb's CoreDNS bootstrap while
+  the NLB hostname does not resolve yet (#24; other modes in the README).
 - **cert-manager is installed unconditionally** (decoupled from the knative
   gate). It is a free component; the previous knative-and-license gating is
   removed. Optional add-ons (knative, k8gb, ArgoCD) stay behind their own flags.
@@ -320,8 +324,9 @@ is no licensing consideration.
   in the existing per-cloud network/identity modules, not the shared add-on
   layer.
 - **Teardown dependency:** every child-cluster `Object`/`Release` added by an
-  add-on (k8gb Helm `Release`, CoreDNS observe `Object`, LB controller, Envoy
-  Gateway, ArgoCD) carries an `of: EKS, by: <resource>` `Usage` guard so it
+  add-on (k8gb Helm `Release`, CoreDNS and zone observe `Object`s, bootstrap
+  nudge `Object`, LB controller, Envoy Gateway, ArgoCD) carries an
+  `of: EKS, by: <resource>` `Usage` guard so it
   finishes uninstalling before the cluster/kubeconfig is torn out from under it,
   otherwise the child Objects orphan-finalize. **Implemented** (`usages.py`),
   alongside the base `Release`→cluster and cluster→`Network` guards.

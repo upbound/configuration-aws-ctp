@@ -24,8 +24,10 @@ ordered section it corresponds to):
 
 Cluster metadata (OIDC issuer/ARN, running node-group instance type) is read
 from the composed EKS XR's status.eks (configuration-aws-eks v2.0.2+); the only
-observe-only resource composed here is the k8gb CoreDNS Service Object (to read
-its LoadBalancer endpoint for the status contract).
+observe-only resources composed here are the k8gb CoreDNS Service Object (to
+read its LoadBalancer endpoint for the status contract) and the k8gb zone
+ConfigMap Object (to gate readiness on k8gb having written its zone, in modes
+that push Updates).
 """
 
 from datetime import datetime, timezone
@@ -61,11 +63,14 @@ from .prelude import (
     derive_k8gb_geo_tag,
     extract_bucket_name,
     extract_cluster_identity,
+    extract_coredns_endpoint,
     extract_k8gb_eips,
     extract_oidc_info,
     extract_vpc_id,
     get_installed_license,
     get_nodegroup_actual_type,
+    has_observed_manifest,
+    is_k8gb_zone_empty,
     is_knative_serving_ready,
     is_license_applied,
     is_release_deployed,
@@ -98,10 +103,10 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     # Capture the reconciliation timestamp once and thread it through every
     # section so every emitted resource carries the same value. Pattern
     # borrowed from upbound/labs python-devex-ai compose-network.
+    now = datetime.now(timezone.utc)
     config = {
-        "last_reconcile_date": datetime.now(timezone.utc).strftime(
-            "%A %Y-%m-%d %H:%M:%S UTC"
-        ),
+        "last_reconcile_date": now.strftime("%A %Y-%m-%d %H:%M:%S UTC"),
+        "reconcile_time": now,
     }
 
     # The protobuf Struct types in req do not implement Python dict
@@ -181,6 +186,19 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
         k8gb_eip_alloc_ids = [e["allocationId"] for e in eips]
         k8gb_eip_ips = [e["publicIp"] for e in eips]
 
+    # k8gb bootstrap nudge Service (k8gb.py, #24). Only modes that push Updates
+    # nudge, and only they gate Ready on k8gb's zone, as nothing else would
+    # unstick it. They nudge while CoreDNS has its LB endpoint but the zone
+    # ConfigMap is still empty. ObserveOnly keeps a nudge Object only once it
+    # has read the Service; Deprovision composes none, so GC removes one.
+    k8gb_zone_gate = k8gb_enabled and bool({"*", "Update"} & set(mgmt_policies))
+    k8gb_nudge = k8gb_zone_gate or (
+        k8gb_enabled and management_mode == "ObserveOnly"
+        and has_observed_manifest(observed_resources, "k8gb-bootstrap-nudge"))
+    k8gb_nudging = (k8gb_zone_gate
+                    and bool(extract_coredns_endpoint(observed_resources))
+                    and is_k8gb_zone_empty(observed_resources))
+
     oidc_url, _cluster_arn, oidc_host, account_id = extract_oidc_info(
         backup, observed_resources
     )
@@ -259,7 +277,7 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     add_uxp_release(rsp, id_val, uxp_version, uxp_deployed, mgr_args, config)
     add_usage_resources(rsp, id_val, config, k8gb_enabled=k8gb_enabled,
                         argocd_enabled=argocd_enabled,
-                        k8gb_eip_count=k8gb_eip_count)
+                        k8gb_eip_count=k8gb_eip_count, k8gb_nudge=k8gb_nudge)
 
     # cert-manager is always installed (free component, no license gate) so the
     # k8gb/argocd add-ons can rely on it for Gateway TLS independently of knative.
@@ -282,7 +300,9 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     if k8gb_enabled:
         add_k8gb_resources(rsp, id_val, k8gb, k8gb_geo_tag, k8gb_ext_geo_tags,
                            k8gb_deployed, region, provider_config,
-                           k8gb_eip_count, k8gb_eip_alloc_ids, config)
+                           k8gb_eip_count, k8gb_eip_alloc_ids, config,
+                           compose_nudge=k8gb_nudge, nudging=k8gb_nudging,
+                           zone_gates_ready=k8gb_zone_gate)
 
     if argocd_enabled:
         add_argocd_resources(rsp, id_val, argocd, argocd_deployed,
@@ -324,8 +344,8 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     # and AWS MRs all carry spec.forProvider) inherits mgmt_policies, so
     # Provision/ObserveOnly never delete the provisioned control plane on
     # teardown. Resources with an explicit policy (backup bucket, k8gb CoreDNS
-    # observe, knative operator) and composed XRs / Usage guards (no forProvider)
-    # are left untouched.
+    # and zone observe, knative operator) and composed XRs / Usage guards (no
+    # forProvider) are left untouched.
     for _name in list(rsp.desired.resources.keys()):
         _res = resource.struct_to_dict(rsp.desired.resources[_name].resource)
         _spec = _res.get("spec", {})
