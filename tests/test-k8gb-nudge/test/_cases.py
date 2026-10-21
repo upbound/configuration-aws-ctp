@@ -3,10 +3,12 @@ ControlPlane composition with k8gb enabled and asserts the zone observe Object, 
 Service Object and their Usage guards per managementMode.
 """
 
-# JMESPath assertion keys on the nudge Service annotations: the time bucket is a
-# 120s-aligned UTC timestamp while nudging and absent while idle.
-NUDGE_BUCKET_ALIGNED = (r"(regex_match('^\d{4}-\d{2}-\d{2}T\d{2}:\d[02468]:00Z$', "
-                        '@."upbound.io/k8gb-bootstrap-nudge" || \'\'))')
+# JMESPath assertion keys for the nudge time bucket. While nudging it is the
+# composed Object's last-reconcile-date (stamped from the same `now`) truncated to
+# 2m; while idle the Service annotation is absent.
+NUDGE_BUCKET_IS_FLOOR = ("(time_truncate(time_parse('Monday 2006-01-02 15:04:05 UTC', "
+                         'metadata.annotations."last-reconcile-date"), \'2m\') == '
+                         'spec.forProvider.manifest.metadata.annotations."upbound.io/k8gb-bootstrap-nudge")')
 NUDGE_BUCKET_SET = "(contains(keys(@), 'upbound.io/k8gb-bootstrap-nudge'))"
 
 CASES = [
@@ -144,7 +146,7 @@ CASES = [
                                    'spec': {'forProvider': {'manifest': {'metadata': {'annotations': {'upbound.io/k8gb-bootstrap': 'idle', NUDGE_BUCKET_SET: False}}}}}}]}},
     # #24: CoreDNS has its NLB hostname but the zone ConfigMap is still empty, so k8gb
     # gave up on a hostname that did not resolve yet. The nudge annotation is a time
-    # bucket, so only its 120s alignment is asserted.
+    # bucket, asserted against the Object's last-reconcile-date.
     {'name': 'k8gb-bootstrap-nudge-while-zone-missing',
      'spec': {'compositionPath': 'apis/ctp/composition.yaml',
               'xrdPath': 'apis/ctp/definition.yaml',
@@ -179,8 +181,9 @@ CASES = [
               'assertResources': [{'apiVersion': 'kubernetes.m.crossplane.io/v1alpha1',
                                    'kind': 'Object',
                                    'metadata': {'name': 'test-cp-k8gb-bootstrap-nudge'},
+                                   NUDGE_BUCKET_IS_FLOOR: True,
                                    'spec': {'managementPolicies': ['*'],
-                                            'forProvider': {'manifest': {'metadata': {'annotations': {'upbound.io/k8gb-bootstrap': 'nudging', NUDGE_BUCKET_ALIGNED: True}}}}}}]}},
+                                            'forProvider': {'manifest': {'metadata': {'annotations': {'upbound.io/k8gb-bootstrap': 'nudging'}}}}}}]}},
     # Provision pushes Updates, so like Full it nudges and gates Ready on the zone; it
     # only never deletes.
     {'name': 'k8gb-bootstrap-nudge-provision-nudges',
@@ -218,11 +221,12 @@ CASES = [
               'assertResources': [{'apiVersion': 'kubernetes.m.crossplane.io/v1alpha1',
                                    'kind': 'Object',
                                    'metadata': {'name': 'test-cp-k8gb-bootstrap-nudge'},
+                                   NUDGE_BUCKET_IS_FLOOR: True,
                                    'spec': {'managementPolicies': ['Observe',
                                                                    'Create',
                                                                    'Update',
                                                                    'LateInitialize'],
-                                            'forProvider': {'manifest': {'metadata': {'annotations': {'upbound.io/k8gb-bootstrap': 'nudging', NUDGE_BUCKET_ALIGNED: True}}}}}},
+                                            'forProvider': {'manifest': {'metadata': {'annotations': {'upbound.io/k8gb-bootstrap': 'nudging'}}}}}},
                                   {'apiVersion': 'kubernetes.m.crossplane.io/v1alpha1',
                                    'kind': 'Object',
                                    'metadata': {'name': 'test-cp-k8gb-zone-delegation'},
