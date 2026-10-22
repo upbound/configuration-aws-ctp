@@ -140,6 +140,30 @@ operator, and CoreDNS exposed through an NLB serving UDP+TCP:53, and surfaces
 GSLB is not yet functional end-to-end — nothing writes the NS delegation until
 FleetGslb exists.
 
+**Bootstrap nudge ([#24](https://github.com/upbound/configuration-aws-ctp/issues/24)).**
+k8gb v0.20.0 resolves the CoreDNS NLB hostname to find its own IPs; when a fresh
+hostname does not resolve yet it gives up without a requeue until its ~10h
+informer resync, leaving `k8gb/k8gb-zone-delegation` empty. k8gb re-runs that
+bootstrap on any update to a Service labelled `app.kubernetes.io/name: coredns`,
+so the composition manages an inert one, `default/k8gb-bootstrap-nudge`
+(headless, no selector, no ports). While the NLB has a hostname but the zone is
+empty, its `upbound.io/k8gb-bootstrap-nudge` annotation changes every 2
+minutes; `upbound.io/k8gb-bootstrap` reads `nudging` or `idle`. Per
+`managementMode`:
+
+- `Full`, `Provision`: compose the nudge Service and nudge; the `ControlPlane`
+  stays non-Ready until k8gb has written its zone (CoreDNS loads it on its next
+  start, a few minutes later).
+- `ObserveOnly`: never nudges or gates Ready on the zone. Keeps an existing
+  nudge Object, at `Observe`, once it has read the Service; otherwise composes
+  none.
+- `Deprovision`: never nudges or gates Ready on the zone, and composes no nudge
+  Object, so an existing one is garbage-collected.
+
+In `ObserveOnly` and `Deprovision` a stuck zone needs
+`kubectl -n k8gb rollout restart deploy/k8gb` on the child cluster, or waits for
+k8gb's ~10h resync. Drop the nudge once upstream k8gb requeues on that error.
+
 ### ArgoCD
 
 When `argocd.enabled: "yes"`, ArgoCD is installed with a UI exposed via Envoy

@@ -13,16 +13,20 @@ FleetGslb aggregator to consume.
   FleetGslb writes the NS delegation, not per-child external-dns.
 - The Helm release name is pinned to `k8gb` (external-name) so its CoreDNS
   Service is `k8gb-coredns` in namespace `k8gb`, the name k8gb expects.
+- In modes that push Updates, k8gb's zone ConfigMap gates readiness and an
+  inert nudge Service re-runs k8gb's CoreDNS bootstrap while that zone is
+  missing (#24).
 """
 
 from crossplane.function import resource
 
-from .prelude import stamp
+from .prelude import build_k8gb_nudge_annotations, stamp
 
 
 def add_k8gb_resources(rsp, id_val, k8gb_param, geo_tag, ext_geo_tags,
                        k8gb_deployed, region, provider_config, eip_count,
-                       eip_alloc_ids, config):
+                       eip_alloc_ids, config, compose_nudge=False,
+                       nudging=False, zone_gates_ready=False):
     dns_zone = k8gb_param.get("dnsZone", "")
     parent_zone = k8gb_param.get("parentZone", "")
 
@@ -170,3 +174,94 @@ def add_k8gb_resources(rsp, id_val, k8gb_param, geo_tag, ext_geo_tags,
     }
     stamp(coredns_observe, config)
     resource.update(rsp.desired.resources["k8gb-coredns-observe"], coredns_observe)
+
+    # Observe-only Object on k8gb's zone ConfigMap. The chart creates it empty
+    # and k8gb fills it once its bootstrap resolves the CoreDNS IPs. In modes
+    # that nudge, the XR stays non-Ready until k8gb has written its zone
+    # (CoreDNS loads it on its next start, a few minutes later).
+    zone_observe = {
+        "apiVersion": "kubernetes.m.crossplane.io/v1alpha1",
+        "kind": "Object",
+        "metadata": {
+            "name": f"{id_val}-k8gb-zone-delegation",
+            "namespace": config["namespace"],
+            "annotations": {
+                "crossplane.io/composition-resource-name": "k8gb-zone-delegation-observe"
+            }
+        },
+        "spec": {
+            "managementPolicies": ["Observe"],
+            "forProvider": {
+                "manifest": {
+                    "apiVersion": "v1",
+                    "kind": "ConfigMap",
+                    "metadata": {
+                        "name": "k8gb-zone-delegation",
+                        "namespace": "k8gb"
+                    }
+                }
+            },
+            # SuccessfulCreate is the provider default, explicit so tests can pin it.
+            "readiness": {
+                "policy": "DeriveFromCelQuery",
+                "celQuery": "has(object.data) && size(object.data) > 0"
+            } if zone_gates_ready else {"policy": "SuccessfulCreate"},
+            "providerConfigRef": {
+                "name": id_val,
+                "kind": "ProviderConfig"
+            }
+        }
+    }
+    stamp(zone_observe, config)
+    resource.update(rsp.desired.resources["k8gb-zone-delegation-observe"], zone_observe)
+
+    if compose_nudge:
+        _add_bootstrap_nudge(rsp, id_val, nudging, config)
+
+
+def _add_bootstrap_nudge(rsp, id_val, nudging, config):
+    """Inert Service whose updates re-run k8gb's CoreDNS bootstrap reconciler.
+
+    k8gb v0.20.0 digs the CoreDNS NLB hostname once and stops without a requeue
+    when it does not resolve yet, so the zone stays unwritten until the ~10h
+    informer resync (#24). That reconciler re-runs on an update to any Service
+    labelled app.kubernetes.io/name=coredns, cluster-wide, but reads the
+    CoreDNS Service only from ns k8gb, so this one lives in `default` (always
+    present) and is never mistaken for it. Drop it once upstream requeues.
+    """
+    annotations = build_k8gb_nudge_annotations(nudging, config["reconcile_time"])
+
+    nudge = {
+        "apiVersion": "kubernetes.m.crossplane.io/v1alpha1",
+        "kind": "Object",
+        "metadata": {
+            "name": f"{id_val}-k8gb-bootstrap-nudge",
+            "namespace": config["namespace"],
+            "annotations": {
+                "crossplane.io/composition-resource-name": "k8gb-bootstrap-nudge"
+            }
+        },
+        "spec": {
+            "forProvider": {
+                "manifest": {
+                    "apiVersion": "v1",
+                    "kind": "Service",
+                    "metadata": {
+                        "name": "k8gb-bootstrap-nudge",
+                        "namespace": "default",
+                        "labels": {"app.kubernetes.io/name": "coredns"},
+                        "annotations": annotations
+                    },
+                    # Headless and selectorless: no ClusterIP, no endpoints,
+                    # no traffic. Headless is what lets ports be omitted.
+                    "spec": {"clusterIP": "None"}
+                }
+            },
+            "providerConfigRef": {
+                "name": id_val,
+                "kind": "ProviderConfig"
+            }
+        }
+    }
+    stamp(nudge, config)
+    resource.update(rsp.desired.resources["k8gb-bootstrap-nudge"], nudge)

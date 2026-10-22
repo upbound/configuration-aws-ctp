@@ -55,7 +55,8 @@ def _emit_eks_usage(rsp, id_val, cr_name, by_api_version, by_kind, by_name,
 
 
 def add_usage_resources(rsp, id_val, config, k8gb_enabled=False,
-                        argocd_enabled=False, k8gb_eip_count=0):
+                        argocd_enabled=False, k8gb_eip_count=0,
+                        k8gb_nudge=False):
     usage_release_eks = {
         "apiVersion": "protection.crossplane.io/v1beta1",
         "kind": "Usage",
@@ -161,6 +162,19 @@ def add_usage_resources(rsp, id_val, config, k8gb_enabled=False,
             f"{id_val}-k8gb-coredns",
             "k8gb CoreDNS observe Object must be removed before the EKS cluster is deleted",
             config)
+        _emit_eks_usage(
+            rsp, id_val, "usage-k8gb-zone-delegation-eks",
+            "kubernetes.m.crossplane.io/v1alpha1", "Object",
+            f"{id_val}-k8gb-zone-delegation",
+            "k8gb zone ConfigMap observe Object must be removed before the EKS cluster is deleted",
+            config)
+        if k8gb_nudge:
+            _emit_eks_usage(
+                rsp, id_val, "usage-k8gb-bootstrap-nudge-eks",
+                "kubernetes.m.crossplane.io/v1alpha1", "Object",
+                f"{id_val}-k8gb-bootstrap-nudge",
+                "k8gb bootstrap nudge Object must be removed before the EKS cluster is deleted",
+                config)
 
         # The controller must outlive the k8gb Release so it deletes the CoreDNS
         # NLB (and frees its EIPs) before the controller is removed.
